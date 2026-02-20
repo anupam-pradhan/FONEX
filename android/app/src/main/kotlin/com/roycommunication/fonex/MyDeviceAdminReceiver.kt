@@ -5,16 +5,19 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import android.widget.Toast
 
 /**
  * Device Admin Receiver for FONEX Device Control.
- * This class handles Device Owner / Device Admin callbacks.
- * Must be registered in AndroidManifest.xml with BIND_DEVICE_ADMIN permission.
+ * Handles Device Owner / Device Admin callbacks.
+ * onDisableRequested — blocks the user from removing FONEX as device admin while locked.
  */
 class MyDeviceAdminReceiver : DeviceAdminReceiver() {
 
     companion object {
         private const val TAG = "FonexDeviceAdmin"
+        private const val PREFS_NAME = "fonex_device_prefs"
+        private const val KEY_DEVICE_LOCKED = "device_locked"
 
         fun getComponentName(context: Context): ComponentName {
             return ComponentName(context.applicationContext, MyDeviceAdminReceiver::class.java)
@@ -29,6 +32,31 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
     override fun onDisabled(context: Context, intent: Intent) {
         super.onDisabled(context, intent)
         Log.i(TAG, "Device admin disabled")
+    }
+
+    /**
+     * Called when the user tries to disable this Device Admin from Settings.
+     * If the device is currently locked (payment pending), we refuse and show a message.
+     * The return value is shown to the user by Android before they confirm removal.
+     */
+    override fun onDisableRequested(context: Context, intent: Intent): CharSequence {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val isLocked = prefs.getBoolean(KEY_DEVICE_LOCKED, false)
+
+        return if (isLocked) {
+            Log.w(TAG, "Admin disable requested — device is LOCKED, blocking.")
+            Toast.makeText(
+                context,
+                "⚠️ Cannot remove FONEX admin — Please complete your EMI payment first and contact Roy Communication.",
+                Toast.LENGTH_LONG
+            ).show()
+            // This message will be shown in the Android confirmation dialog
+            "⚠️ Device payment is pending. You cannot remove FONEX Device Admin until your EMI payment is completed. " +
+            "Please visit Roy Communication to unlock this device."
+        } else {
+            Log.i(TAG, "Admin disable requested — device is unlocked, allowing.")
+            "Are you sure you want to remove FONEX device management?"
+        }
     }
 
     override fun onProfileProvisioningComplete(context: Context, intent: Intent) {

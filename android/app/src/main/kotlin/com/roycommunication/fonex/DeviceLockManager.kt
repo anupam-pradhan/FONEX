@@ -202,4 +202,22 @@ class DeviceLockManager(private val context: Context) {
             activity.window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
         }
     }
+
+    /**
+     * Permanently remove Device Owner status (Paid in Full mode).
+     */
+    fun clearDeviceOwner(): Boolean {
+        return try {
+            if (isDeviceOwner()) {
+                devicePolicyManager.clearDeviceOwnerApp(context.packageName)
+                Log.i(TAG, "Device Owner status successfully cleared.")
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to clear Device Owner: ${e.message}")
+            false
+        }
+    }
 }

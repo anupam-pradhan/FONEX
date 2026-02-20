@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 // =============================================================================
 // FONEX Powered by Roy Communication — Device Control System
@@ -14,10 +17,18 @@ import 'package:google_fonts/google_fonts.dart';
 
 const String _channelName = 'device.lock/channel';
 const int _lockAfterDays = 30;
+// SIM absent grace period before locking (7 days)
+const int _simAbsentLockDays = 7;
 const int _maxPinAttempts = 3;
 const int _cooldownSeconds = 30;
 const String _keyLastVerified = 'last_verified';
 const String _keyDeviceLocked = 'device_locked';
+const String _keySimAbsentSince = 'sim_absent_since'; // timestamp ms
+// Server API — update to your actual server URL
+const String _serverBaseUrl = 'https://api.roycommunication.in/fonex';
+// Support phone numbers for emergency call on lock screen
+const String _supportPhone1 = '+918388855549';
+const String _supportPhone2 = '+919635252455';
 
 // =============================================================================
 // DEVICE HASH UTILITY — Offline Algorithmic PIN Generation
@@ -345,7 +356,7 @@ class GlowIcon extends StatelessWidget {
 }
 
 // =============================================================================
-// FONEX LOGO
+// FONEX LOGO — uses real brand image
 // =============================================================================
 class FonexLogo extends StatelessWidget {
   final double size;
@@ -358,11 +369,6 @@ class FonexLogo extends StatelessWidget {
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [FonexColors.accent, FonexColors.purple],
-        ),
         boxShadow: [
           BoxShadow(
             color: FonexColors.accent.withValues(alpha: 0.35),
@@ -376,13 +382,33 @@ class FonexLogo extends StatelessWidget {
           ),
         ],
       ),
-      child: Center(
-        child: Text(
-          'F',
-          style: GoogleFonts.inter(
-            fontSize: size * 0.45,
-            fontWeight: FontWeight.w900,
-            color: Colors.white,
+      child: ClipOval(
+        child: Image.asset(
+          'assets/images/fonex-logo.jpeg',
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Container(
+            width: size,
+            height: size,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [FonexColors.accent, FonexColors.purple],
+              ),
+            ),
+            child: Center(
+              child: Text(
+                'F',
+                style: GoogleFonts.inter(
+                  fontSize: size * 0.45,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -407,6 +433,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   bool _isDeviceOwner = false;
   bool _isDeviceLocked = false;
   bool _isLoading = true;
+  bool _isPaidInFull = false;
   int _daysRemaining = 30;
 
   Timer? _simCheckTimer;
@@ -416,9 +443,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initialize();
-    
-    // Poll SIM state every 10 seconds while app is active
-    _simCheckTimer = Timer.periodic(const Duration(seconds: 10), (_) => _checkSimState());
+    // Poll SIM state every 60 seconds while app is active
+    _simCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) => _checkSimState());
   }
 
   @override
@@ -428,18 +454,36 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     super.dispose();
   }
 
+  /// SIM-absent logic: lock only after 7 continuous days without a SIM.
   Future<void> _checkSimState() async {
-    if (!_isDeviceOwner || _isDeviceLocked) return;
+    if (!_isDeviceOwner || _isDeviceLocked || _isPaidInFull) return;
     try {
       final simState = await _channel.invokeMethod<int>('getSimState');
-      if (simState == 1) { // 1 = SIM_STATE_ABSENT
-        debugPrint('SIM_STATE_ABSENT detected! Locking device.');
-        await _engageDeviceLock();
-        if (mounted) {
-          setState(() {
-            _isDeviceLocked = true;
-            _daysRemaining = 0;
-          });
+      final prefs = await SharedPreferences.getInstance();
+
+      if (simState == 1) {
+        // SIM_STATE_ABSENT — record first absence if not already recorded
+        final absentSince = prefs.getInt(_keySimAbsentSince);
+        if (absentSince == null) {
+          await prefs.setInt(
+              _keySimAbsentSince, DateTime.now().millisecondsSinceEpoch);
+          debugPrint('SIM absent detected — grace period started (7 days).');
+        } else {
+          final daysMissing =
+              DateTime.now().difference(
+                DateTime.fromMillisecondsSinceEpoch(absentSince)).inDays;
+          debugPrint('SIM absent for $daysMissing days (lock after $_simAbsentLockDays).');
+          if (daysMissing >= _simAbsentLockDays) {
+            debugPrint('SIM absent >$_simAbsentLockDays days — locking device.');
+            await _engageDeviceLock();
+            if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
+          }
+        }
+      } else {
+        // SIM present — clear the absent timer
+        if (prefs.containsKey(_keySimAbsentSince)) {
+          await prefs.remove(_keySimAbsentSince);
+          debugPrint('SIM detected — grace period cleared.');
         }
       }
     } on PlatformException catch (e) {
@@ -451,12 +495,22 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _checkTimerAndLock();
+      _checkSimState();
     }
   }
 
   Future<void> _initialize() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('is_paid_in_full') == true) {
+      if (mounted) setState(() => _isPaidInFull = true);
+    }
+    
     await _checkDeviceOwner();
-    await _checkTimerAndLock();
+    if (!_isPaidInFull) {
+      await _checkTimerAndLock();
+    }
+    // Attempt server check-in (non-blocking, offline-safe)
+    _serverCheckIn();
     if (mounted) setState(() => _isLoading = false);
   }
 
@@ -488,35 +542,29 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       return;
     }
 
+    final wasLocked = prefs.getBool(_keyDeviceLocked) ?? false;
+
+    // If explicitly marked locked in prefs, re-engage lock
+    if (wasLocked) {
+      await _engageDeviceLock();
+      if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
+      return;
+    }
+
+    // Not locked — check timer expiry
     final lastVerified = DateTime.fromMillisecondsSinceEpoch(lastVerifiedMs);
     final daysSince = DateTime.now().difference(lastVerified).inDays;
     final remaining = _lockAfterDays - daysSince;
 
     if (daysSince >= _lockAfterDays) {
       await _engageDeviceLock();
+      if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
+    } else {
       if (mounted) {
         setState(() {
-          _isDeviceLocked = true;
-          _daysRemaining = 0;
+          _isDeviceLocked = false;
+          _daysRemaining = remaining.clamp(0, _lockAfterDays);
         });
-      }
-    } else {
-      final wasLocked = prefs.getBool(_keyDeviceLocked) ?? false;
-      if (wasLocked) {
-        await _engageDeviceLock();
-        if (mounted) {
-          setState(() {
-            _isDeviceLocked = true;
-            _daysRemaining = 0;
-          });
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _isDeviceLocked = false;
-            _daysRemaining = remaining.clamp(0, _lockAfterDays);
-          });
-        }
       }
     }
   }
@@ -532,13 +580,17 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
   }
 
+  /// FIX: Properly clear locked flag AND reset timer so device doesn't re-lock immediately.
   Future<void> _disengageDeviceLock() async {
     try {
       await _channel.invokeMethod('stopDeviceLock');
       final prefs = await SharedPreferences.getInstance();
+      // Clear locked flag
       await prefs.setBool(_keyDeviceLocked, false);
-      await prefs.setInt(
-          _keyLastVerified, DateTime.now().millisecondsSinceEpoch);
+      // Reset the verification timer to NOW — user gets a fresh 30-day window
+      await prefs.setInt(_keyLastVerified, DateTime.now().millisecondsSinceEpoch);
+      // Clear SIM absent timer too
+      await prefs.remove(_keySimAbsentSince);
       if (mounted) {
         setState(() {
           _isDeviceLocked = false;
@@ -547,6 +599,70 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       }
     } on PlatformException catch (e) {
       debugPrint('Error disengaging device lock: $e');
+    }
+  }
+
+  /// Backend check-in — tells server device state and obeys server commands.
+  /// Fails silently if offline.
+  Future<void> _serverCheckIn() async {
+    try {
+      final deviceHash = await DeviceHashUtil.getDeviceHash();
+      String imei = "Not Found";
+      try {
+        final info = await _channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+        if (info != null && info.containsKey('imei')) {
+          imei = info['imei'] as String;
+        }
+      } catch (_) {}
+
+      final response = await http.post(
+        Uri.parse('$_serverBaseUrl/api/checkin'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'device_hash': deviceHash,
+          'imei': imei,
+          'is_locked': _isDeviceLocked,
+          'days_remaining': _daysRemaining,
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final action = data['action'] as String? ?? 'none';
+        debugPrint('Server check-in response: action=$action');
+        switch (action) {
+          case 'lock':
+            await _engageDeviceLock();
+            if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
+            break;
+          case 'unlock':
+            await _disengageDeviceLock();
+            break;
+          case 'extend':
+            final days = data['days'] as int? ?? _lockAfterDays;
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setInt(
+              _keyLastVerified,
+              DateTime.now().subtract(Duration(days: _lockAfterDays - days)).millisecondsSinceEpoch,
+            );
+            if (mounted) setState(() => _daysRemaining = days);
+            break;
+          case 'paid_in_full':
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('is_paid_in_full', true);
+            if (mounted) setState(() => _isPaidInFull = true);
+            await _disengageDeviceLock();
+            try {
+              await _channel.invokeMethod('clearDeviceOwner');
+            } catch (_) {}
+            break;
+          default:
+            break;
+        }
+      }
+    } catch (e) {
+      // Offline or server error — ignore, local logic handles everything
+      debugPrint('Server check-in skipped (offline or error): $e');
     }
   }
 
@@ -577,6 +693,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     );
   }
 }
+
 
 // =============================================================================
 // SPLASH SCREEN — Premium animated loading
@@ -1010,7 +1127,44 @@ class _LockScreenState extends State<LockScreen>
                               ),
                             ),
 
-                            const SizedBox(height: 40),
+                            const SizedBox(height: 24),
+
+                            // Emergency Call Buttons
+                            GlassCard(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                              borderColor: FonexColors.green.withValues(alpha: 0.3),
+                              borderRadius: 18,
+                              child: Column(
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const Icon(Icons.phone_in_talk_rounded,
+                                          color: FonexColors.green, size: 16),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Need Help? Call Roy Communication',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: FonexColors.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Expanded(child: _CallButton(number: _supportPhone1, label: '+91 83888 55549')),
+                                      const SizedBox(width: 10),
+                                      Expanded(child: _CallButton(number: _supportPhone2, label: '+91 96352 52455')),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            const SizedBox(height: 20),
 
                             // Hidden unlock trigger — tap 5x
                             GestureDetector(
@@ -1037,6 +1191,70 @@ class _LockScreenState extends State<LockScreen>
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// CALL BUTTON — Emergency support call widget for lock screen
+// =============================================================================
+class _CallButton extends StatelessWidget {
+  final String number;
+  final String label;
+  const _CallButton({required this.number, required this.label});
+
+  Future<void> _call() async {
+    final uri = Uri.parse('tel:$number');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _call,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          gradient: LinearGradient(
+            colors: [
+              FonexColors.green.withValues(alpha: 0.18),
+              FonexColors.green.withValues(alpha: 0.08),
+            ],
+          ),
+          border: Border.all(
+            color: FonexColors.green.withValues(alpha: 0.35),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: FonexColors.green.withValues(alpha: 0.12),
+              blurRadius: 12,
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.phone_rounded,
+                color: FonexColors.green, size: 16),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: FonexColors.green,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1145,14 +1363,37 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
       final expectedAlgorithmicPin = DeviceHashUtil.getExpectedPin(widget.deviceHash);
       bool isValid = false;
 
+      // 1. Check algorithmic PIN (offline)
       if (pin == expectedAlgorithmicPin) {
         isValid = true;
       } else {
-        // Fallback to natively stored PIN (default 1234)
+        // 2. Check native stored PIN (offline fallback)
         isValid = await _channel.invokeMethod<bool>(
           'validatePin',
           {'pin': pin},
         ) ?? false;
+      }
+
+      // 3. If local checks fail, try server-side unlock
+      if (!isValid) {
+        setState(() => _errorMessage = 'Verifying with server...');
+        try {
+          final response = await http.post(
+            Uri.parse('$_serverBaseUrl/api/unlock'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'device_hash': widget.deviceHash,
+              'pin': pin,
+            }),
+          ).timeout(const Duration(seconds: 8));
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body) as Map<String, dynamic>;
+            isValid = data['success'] == true;
+          }
+        } catch (_) {
+          // Server unreachable — continue with local failure
+        }
       }
 
       if (isValid) {

@@ -83,12 +83,27 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "getDeviceInfo" -> {
+                    val tm = applicationContext.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                    val imei = try {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            tm.imei
+                        } else {
+                            @Suppress("DEPRECATION", "MissingPermission")
+                            tm.deviceId
+                        }
+                    } catch (e: SecurityException) {
+                        "Permission Denied"
+                    } catch (e: Exception) {
+                        "Unknown API Error"
+                    }
+
                     val info = mapOf(
                         "isDeviceOwner" to deviceLockManager.isDeviceOwner(),
                         "isDeviceLocked" to deviceLockManager.isDeviceLocked(),
                         "androidVersion" to android.os.Build.VERSION.SDK_INT,
                         "deviceModel" to android.os.Build.MODEL,
-                        "manufacturer" to android.os.Build.MANUFACTURER
+                        "manufacturer" to android.os.Build.MANUFACTURER,
+                        "imei" to (imei ?: "Not Found")
                     )
                     result.success(info)
                 }
@@ -96,6 +111,21 @@ class MainActivity : FlutterActivity() {
                 "getSimState" -> {
                     val tm = applicationContext.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
                     result.success(tm.simState)
+                }
+
+                "showResetBlockedMessage" -> {
+                    android.widget.Toast.makeText(
+                        this,
+                        "⛔ Cannot reset this device — Please complete your EMI payment first. " +
+                        "Contact Roy Communication: +91 8388855549",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                    result.success(true)
+                }
+
+                "clearDeviceOwner" -> {
+                    val success = deviceLockManager.clearDeviceOwner()
+                    result.success(success)
                 }
 
                 else -> {
