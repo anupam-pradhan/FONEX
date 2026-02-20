@@ -55,6 +55,9 @@ pip install pyinstaller
 echo.
 echo  [4/4] Building FONEX_Provisioner.exe...
 
+REM Kill any running ADB server so Windows releases the file lock on adb.exe
+taskkill /F /IM adb.exe >nul 2>&1
+
 REM Clean previous spec to avoid caching old flags (like missing icons)
 if exist FONEX_Provisioner.spec del FONEX_Provisioner.spec
 
