@@ -41,24 +41,24 @@ TEXT_MUTED = "#475569"
 # ─── Runtime base directory ──────────────────────────────────────────────────
 def _runtime_dir() -> str:
     """Returns the directory where bundled files are extracted at runtime."""
-    # PyInstaller extracts bundled files to sys._MEIPASS
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return sys._MEIPASS
+    # PyInstaller separates logic depending on --onefile vs --onedir
+    if getattr(sys, "frozen", False):
+        if hasattr(sys, "_MEIPASS"):  # --onefile flag puts things here
+            return sys._MEIPASS
+        else: # --onedir puts things right next to the executable
+            return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
 
 # ─── ADB Path ─────────────────────────────────────────────────────────────────
 def get_adb_path() -> str:
-    """Find ADB — checks bundled _MEIPASS dir first, then exe folder, then PATH."""
-    meipass = _runtime_dir()
-    exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else meipass
-
+    """Find ADB — checks bundled dir first, then exe folder, then PATH."""
+    base_dir = _runtime_dir()
     adb_name = "adb.exe" if sys.platform == "win32" else "adb"
+    
     candidates = [
-        os.path.join(meipass, adb_name),            # ← bundled inside EXE (root of _MEIPASS)
-        os.path.join(meipass, "platform-tools", adb_name), # ← bundled inside folder
-        os.path.join(exe_dir, adb_name),            # ← next to EXE (fallback)
-        os.path.join(exe_dir, "platform-tools", adb_name),
-        adb_name,                                   # ← system PATH
+        os.path.join(base_dir, "platform-tools", adb_name), # ← bundled inside folder
+        os.path.join(base_dir, adb_name),                   # ← bundled inside EXE root
+        adb_name,                                           # ← system PATH
     ]
     for c in candidates:
         if not os.path.exists(c) and c != adb_name:
@@ -73,22 +73,16 @@ def get_adb_path() -> str:
 
 # ─── APK Path ─────────────────────────────────────────────────────────────────
 def get_bundled_apk() -> str:
-    """Find bundled APK — checks _MEIPASS first. Extracts to temp if needed for ADB."""
-    meipass = _runtime_dir()
-    exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else meipass
+    """Find bundled APK — checks runtime dir first."""
+    base_dir = _runtime_dir()
 
     # Priority 1: Bundled APK
-    bundled_path = os.path.join(meipass, "fonex.apk")
+    bundled_path = os.path.join(base_dir, "fonex.apk")
     if os.path.exists(bundled_path):
         return bundled_path
-
-    # Priority 2: Next to EXE
-    local_path = os.path.join(exe_dir, "fonex.apk")
-    if os.path.exists(local_path):
-        return local_path
         
-    # Priority 3: Dev environment Flutter build
-    dev_path = os.path.normpath(os.path.join(exe_dir, "..", "build", "app", "outputs", "flutter-apk", "app-release.apk"))
+    # Priority 2: Dev environment Flutter build
+    dev_path = os.path.normpath(os.path.join(base_dir, "..", "build", "app", "outputs", "flutter-apk", "app-release.apk"))
     if os.path.exists(dev_path):
         return dev_path
 
