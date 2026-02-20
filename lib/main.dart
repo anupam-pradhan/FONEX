@@ -25,7 +25,7 @@ const String _keyLastVerified = 'last_verified';
 const String _keyDeviceLocked = 'device_locked';
 const String _keySimAbsentSince = 'sim_absent_since'; // timestamp ms
 // Server API — update to your actual server URL
-const String _serverBaseUrl = 'https://api.roycommunication.in/fonex';
+const String _serverBaseUrl = 'https://fonex-backend-mobile-system.vercel.app/api/v1/devices';
 // Support phone numbers for emergency call on lock screen
 const String _supportPhone1 = '+918388855549';
 const String _supportPhone2 = '+919635252455';
@@ -608,27 +608,36 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     try {
       final deviceHash = await DeviceHashUtil.getDeviceHash();
       String imei = "Not Found";
+      Map<String, dynamic> metadata = {};
       try {
         final info = await _channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
-        if (info != null && info.containsKey('imei')) {
-          imei = info['imei'] as String;
+        if (info != null) {
+          if (info.containsKey('imei')) imei = info['imei'] as String;
+          metadata = {
+            'model': info['deviceModel']?.toString() ?? 'Unknown',
+            'manufacturer': info['manufacturer']?.toString() ?? 'Unknown',
+            'android_version': info['androidVersion'] ?? 0,
+          };
         }
       } catch (_) {}
 
       final response = await http.post(
-        Uri.parse('$_serverBaseUrl/api/checkin'),
+        Uri.parse('$_serverBaseUrl/checkin'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'device_hash': deviceHash,
           'imei': imei,
           'is_locked': _isDeviceLocked,
           'days_remaining': _daysRemaining,
+          'metadata': metadata,
         }),
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final action = data['action'] as String? ?? 'none';
+        final rawAction = data['action'] as String? ?? 'none';
+        final action = rawAction.toLowerCase();
+        
         debugPrint('Server check-in response: action=$action');
         switch (action) {
           case 'lock':
@@ -639,6 +648,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             await _disengageDeviceLock();
             break;
           case 'extend':
+          case 'extend_days':
             final days = data['days'] as int? ?? _lockAfterDays;
             final prefs = await SharedPreferences.getInstance();
             await prefs.setInt(
@@ -648,6 +658,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             if (mounted) setState(() => _daysRemaining = days);
             break;
           case 'paid_in_full':
+          case 'mark_paid_in_full':
             final prefs = await SharedPreferences.getInstance();
             await prefs.setBool('is_paid_in_full', true);
             if (mounted) setState(() => _isPaidInFull = true);
@@ -1379,7 +1390,7 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
         setState(() => _errorMessage = 'Verifying with server...');
         try {
           final response = await http.post(
-            Uri.parse('$_serverBaseUrl/api/unlock'),
+            Uri.parse('$_serverBaseUrl/unlock'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
               'device_hash': widget.deviceHash,
