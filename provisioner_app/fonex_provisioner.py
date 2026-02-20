@@ -53,19 +53,15 @@ def _runtime_dir() -> str:
 def get_adb_path() -> str:
     """Find ADB — checks bundled dir first, then exe folder, then PATH."""
     base_dir = _runtime_dir()
-    
-    # In PyInstaller 6+ onedir mode, sys.executable is inside _internal/
-    parent_dir = os.path.dirname(base_dir) 
-
     adb_name = "adb.exe" if sys.platform == "win32" else "adb"
     
     candidates = [
-        os.path.join(base_dir, "platform-tools", adb_name),   # ← inside _internal
-        os.path.join(parent_dir, "platform-tools", adb_name), # ← next to the EXE
-        os.path.join(base_dir, adb_name),                     # ← bundled flat inside _internal
-        os.path.join(parent_dir, adb_name),                   # ← bundled flat next to EXE
-        "platform-tools/" + adb_name,                         # ← relative CWD
-        adb_name,                                             # ← system PATH
+        os.path.join(base_dir, "_internal", "platform-tools", adb_name), # ← PyInstaller 6 onedir
+        os.path.join(base_dir, "platform-tools", adb_name),              # ← older PyInstaller onedir
+        os.path.join(base_dir, "_internal", adb_name),                   
+        os.path.join(base_dir, adb_name),                                
+        "platform-tools/" + adb_name,                                    # ← relative CWD fallback
+        adb_name,                                                        # ← system PATH
     ]
     for c in candidates:
         if not os.path.exists(c) and c != adb_name:
@@ -83,13 +79,12 @@ def get_adb_path() -> str:
 def get_bundled_apk() -> str:
     """Find bundled APK — checks runtime dir first."""
     base_dir = _runtime_dir()
-    parent_dir = os.path.dirname(base_dir)
 
     candidates = [
-        os.path.join(base_dir, "fonex.apk"),      # inside _internal
-        os.path.join(parent_dir, "fonex.apk"),    # next to the EXE
-        "fonex.apk",                              # relative CWD
-        os.path.normpath(os.path.join(base_dir, "..", "build", "app", "outputs", "flutter-apk", "app-release.apk")) # dev flutter dir
+        os.path.join(base_dir, "_internal", "fonex.apk"),      # ← PyInstaller 6 onedir
+        os.path.join(base_dir, "fonex.apk"),                   # ← next to EXE
+        "fonex.apk",                                           # ← relative CWD
+        os.path.normpath(os.path.join(base_dir, "..", "build", "app", "outputs", "flutter-apk", "app-release.apk")) 
     ]
 
     for p in candidates:
