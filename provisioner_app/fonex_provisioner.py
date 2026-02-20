@@ -38,59 +38,91 @@ TEXT       = "#F1F5F9"
 TEXT_SEC   = "#94A3B8"
 TEXT_MUTED = "#475569"
 
-# ─── Runtime base directory ──────────────────────────────────────────────────
-def _runtime_dir() -> str:
-    """Returns the directory where bundled files are extracted at runtime."""
-    # PyInstaller separates logic depending on --onefile vs --onedir
-    if getattr(sys, "frozen", False):
-        if hasattr(sys, "_MEIPASS"):  # --onefile flag puts things here
-            return sys._MEIPASS
-        else: # --onedir puts things right next to the executable
-            return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-# ─── ADB Path ─────────────────────────────────────────────────────────────────
-def get_adb_path() -> str:
-    """Find ADB — checks bundled dir first, then exe folder, then PATH."""
-    base_dir = _runtime_dir()
-    adb_name = "adb.exe" if sys.platform == "win32" else "adb"
+# ─── Robust File Discovery ─────────────────────────────────────────────────────
+def find_bundled_file(target_name: str) -> str:
+    """Recursively search for a file starting from the executable's directory."""
     
-    candidates = [
-        os.path.join(base_dir, "_internal", "platform-tools", adb_name), # ← PyInstaller 6 onedir
-        os.path.join(base_dir, "platform-tools", adb_name),              # ← older PyInstaller onedir
-        os.path.join(base_dir, "_internal", adb_name),                   
-        os.path.join(base_dir, adb_name),                                
-        "platform-tools/" + adb_name,                                    # ← relative CWD fallback
-        adb_name,                                                        # ← system PATH
-    ]
-    for c in candidates:
-        if not os.path.exists(c) and c != adb_name:
-             continue
-        try:
-            r = subprocess.run([c, "version"], capture_output=True, timeout=5)
-            if r.returncode == 0:
-                print(f"DEBUG: Found ADB at >> {c}")
-                return c
-        except Exception:
-            continue
+    # 1. Determine search roots based on execution environment
+    roots = []
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+        roots.append(exe_dir)
+        # In PyInstaller 6 onedir, sys.executable is inside _internal, so we check parent too
+        roots.append(os.path.dirname(exe_dir))
+        if hasattr(sys, "_MEIPASS"):
+            roots.append(sys._MEIPASS)
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        roots.append(script_dir)
+        roots.append(os.path.join(script_dir, "platform-tools"))
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_roots = [x for x in roots if not (x in seen or seen.add(x))]
+
+    # 2. Fast check expected locations first
+    for r in unique_roots:
+        quick = os.path.join(r, target_name)
+        if os.path.exists(quick):
+            print(f"DEBUG: Found {target_name} at >> {quick}")
+            return quick
+        
+        quick_pt = os.path.join(r, "platform-tools", target_name)
+        if os.path.exists(quick_pt):
+            print(f"DEBUG: Found {target_name} at >> {quick_pt}")
+            return quick_pt
+            
+        quick_internal = os.path.join(r, "_internal", target_name)
+        if os.path.exists(quick_internal):
+            print(f"DEBUG: Found {target_name} at >> {quick_internal}")
+            return quick_internal
+
+    # 3. Deep search (DFS fallback)
+    for r in unique_roots:
+        for root, dirs, files in os.walk(r):
+            if target_name in files:
+                found = os.path.join(root, target_name)
+                print(f"DEBUG: Found {target_name} (deep) at >> {found}")
+                return found
+
     return ""
 
-# ─── APK Path ─────────────────────────────────────────────────────────────────
+# ─── File Path Getters ─────────────────────────────────────────────────────────
+def get_adb_path() -> str:
+    """Find absolute ADB path using robust discovery."""
+    adb_name = "adb.exe" if sys.platform == "win32" else "adb"
+    
+    # Check bundled/local directories
+    found = find_bundled_file(adb_name)
+    if found:
+        return found
+        
+    # Final fallback: system PATH
+    try:
+        if subprocess.run([adb_name, "version"], capture_output=True, timeout=5).returncode == 0:
+            print(f"DEBUG: Found ADB via System PATH")
+            return adb_name
+    except:
+        pass
+
+    return ""
+
 def get_bundled_apk() -> str:
-    """Find bundled APK — checks runtime dir first."""
-    base_dir = _runtime_dir()
-
-    candidates = [
-        os.path.join(base_dir, "_internal", "fonex.apk"),      # ← PyInstaller 6 onedir
-        os.path.join(base_dir, "fonex.apk"),                   # ← next to EXE
-        "fonex.apk",                                           # ← relative CWD
-        os.path.normpath(os.path.join(base_dir, "..", "build", "app", "outputs", "flutter-apk", "app-release.apk")) 
-    ]
-
-    for p in candidates:
-        if os.path.exists(p):
-            print(f"DEBUG: Found APK at >> {p}")
-            return p
+    """Find absolute APK path using robust discovery."""
+    # Check bundled/local directories
+    found = find_bundled_file("fonex.apk")
+    if found:
+        return found
+        
+    # Dev environment Flutter build fallback
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    dev_release = os.path.normpath(os.path.join(base_dir, "..", "build", "app", "outputs", "flutter-apk", "app-release.apk"))
+    if os.path.exists(dev_release):
+        return dev_release
+        
+    dev_debug = os.path.normpath(os.path.join(base_dir, "..", "build", "app", "outputs", "flutter-apk", "app-debug.apk"))
+    if os.path.exists(dev_debug):
+        return dev_debug
 
     return ""
 
