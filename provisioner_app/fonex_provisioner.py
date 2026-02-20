@@ -99,7 +99,8 @@ def get_adb_path() -> str:
         
     # Final fallback: system PATH
     try:
-        if subprocess.run([adb_name, "version"], capture_output=True, timeout=5).returncode == 0:
+        cflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        if subprocess.run([adb_name, "version"], capture_output=True, timeout=5, creationflags=cflags).returncode == 0:
             print(f"DEBUG: Found ADB via System PATH")
             return adb_name
     except:
@@ -136,9 +137,11 @@ TOTAL_STEPS  = 7
 # ─── Utility ─────────────────────────────────────────────────────────────────
 def run_adb(adb: str, *args, timeout: int = 30) -> Tuple[int, str, str]:
     try:
+        cflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         r = subprocess.run(
             [adb, *args],
-            capture_output=True, text=True, timeout=timeout
+            capture_output=True, text=True, timeout=timeout,
+            creationflags=cflags
         )
         return r.returncode, r.stdout.strip(), r.stderr.strip()
     except subprocess.TimeoutExpired:
