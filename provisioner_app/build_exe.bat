@@ -68,6 +68,14 @@ pyinstaller ^
   --add-data "fonex.apk;." ^
   fonex_provisioner.py
 
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo ❌ ERROR: PyInstaller failed to build the EXE!
+    echo Please read the error message above to see what went wrong.
+    pause
+    exit /b
+)
+
 echo.
 echo  ============================================================
 echo  BUILD SUCCESS!
