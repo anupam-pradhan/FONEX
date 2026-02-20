@@ -1,4 +1,5 @@
 @echo off
+pause
 REM ============================================================
 REM  FONEX Provisioner — Build Windows EXE (Self-Contained)
 REM  Run this on Windows to create the standalone .exe

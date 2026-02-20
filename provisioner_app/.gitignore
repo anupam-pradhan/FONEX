@@ -5,7 +5,6 @@ dist/
 
 # Bundled Dependencies for Provisioner
 platform-tools/
-*.apk
 
 # Python Cache
 __pycache__/
