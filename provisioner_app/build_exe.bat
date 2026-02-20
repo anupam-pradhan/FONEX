@@ -55,6 +55,9 @@ pip install pyinstaller
 echo.
 echo  [4/4] Building FONEX_Provisioner.exe...
 
+REM Clean previous spec to avoid caching old flags (like missing icons)
+if exist FONEX_Provisioner.spec del FONEX_Provisioner.spec
+
 REM  --add-binary "src;dest"  (Windows separator is ;)
 REM  We bundle adb.exe and dlls into the root of the internal _MEIPASS folder
 
