@@ -60,7 +60,7 @@ REM  We bundle adb.exe and dlls into the root of the internal _MEIPASS folder
 
 pyinstaller ^
   --noconfirm ^
-  --onefile ^
+  --onedir ^
   --windowed ^
   --name FONEX_Provisioner ^
   --icon=fonex_icon.ico ^
