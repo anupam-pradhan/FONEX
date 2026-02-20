@@ -13,9 +13,12 @@ if not exist fonex.apk (
     if exist "..\build\app\outputs\flutter-apk\app-release.apk" (
         echo      Found app-release.apk, copying to fonex.apk...
         copy "..\build\app\outputs\flutter-apk\app-release.apk" "fonex.apk"
+    ) else if exist "..\build\app\outputs\flutter-apk\app-debug.apk" (
+        echo      Found app-debug.apk (dev build), copying to fonex.apk...
+        copy "..\build\app\outputs\flutter-apk\app-debug.apk" "fonex.apk"
     ) else (
         echo      WARNING: fonex.apk not found in current folder or build output.
-        echo      Please build the Flutter app first or place fonex.apk here manually.
+        echo      Please build the Flutter app first (run "flutter build apk" in the main folder^) or copy fonex.apk here manually.
         pause
         exit /b
     )
