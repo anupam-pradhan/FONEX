@@ -63,7 +63,6 @@ pyinstaller ^
   --onedir ^
   --windowed ^
   --name FONEX_Provisioner ^
-  --icon=fonex_icon.ico ^
   --add-binary "platform-tools;platform-tools" ^
   --add-data "fonex.apk;." ^
   fonex_provisioner.py
