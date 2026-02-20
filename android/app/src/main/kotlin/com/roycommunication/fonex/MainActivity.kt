@@ -4,6 +4,8 @@ import android.os.Bundle
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import android.content.Context
+import android.telephony.TelephonyManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -89,6 +91,11 @@ class MainActivity : FlutterActivity() {
                         "manufacturer" to android.os.Build.MANUFACTURER
                     )
                     result.success(info)
+                }
+
+                "getSimState" -> {
+                    val tm = applicationContext.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                    result.success(tm.simState)
                 }
 
                 else -> {

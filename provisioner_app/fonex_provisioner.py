@@ -2,14 +2,11 @@
 FONEX Device Provisioner — Windows Desktop App
 Powered by Roy Communication
 
-A beautiful, visual step-by-step wizard for shop owners to provision
-Android devices with FONEX. No terminal needed.
+Fully self-contained: ADB and the FONEX APK are bundled inside this EXE.
+The shop owner double-clicks the EXE — no extra files needed.
 
-Requirements:
-    pip install customtkinter Pillow
-
-Build to EXE:
-    pyinstaller --onefile --windowed --name FONEX_Provisioner fonex_provisioner.py
+Build EXE (on Windows):
+    Run build_exe.bat — it downloads ADB automatically and bundles everything.
 """
 
 import customtkinter as ctk
@@ -41,21 +38,31 @@ TEXT       = "#F1F5F9"
 TEXT_SEC   = "#94A3B8"
 TEXT_MUTED = "#475569"
 
-# ─── ADB Path ────────────────────────────────────────────────────────────────
-def get_adb_path() -> str:
-    """Find ADB: bundled beside exe, or in PATH."""
-    # When bundled with PyInstaller, look next to the exe
-    if getattr(sys, "frozen", False):
-        base = os.path.dirname(sys.executable)
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
+# ─── Runtime base directory ──────────────────────────────────────────────────
+def _runtime_dir() -> str:
+    """Returns the directory where bundled files are extracted at runtime."""
+    # PyInstaller extracts bundled files to sys._MEIPASS
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
 
+# ─── ADB Path ─────────────────────────────────────────────────────────────────
+def get_adb_path() -> str:
+    """Find ADB — checks bundled _MEIPASS dir first, then exe folder, then PATH."""
+    meipass = _runtime_dir()
+    exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else meipass
+
+    adb_name = "adb.exe" if sys.platform == "win32" else "adb"
     candidates = [
-        os.path.join(base, "adb.exe"),
-        os.path.join(base, "platform-tools", "adb.exe"),
-        "adb",  # fallback to PATH
+        os.path.join(meipass, adb_name),            # ← bundled inside EXE (root of _MEIPASS)
+        os.path.join(meipass, "platform-tools", adb_name), # ← bundled inside folder
+        os.path.join(exe_dir, adb_name),            # ← next to EXE (fallback)
+        os.path.join(exe_dir, "platform-tools", adb_name),
+        adb_name,                                   # ← system PATH
     ]
     for c in candidates:
+        if not os.path.exists(c) and c != adb_name:
+             continue
         try:
             r = subprocess.run([c, "version"], capture_output=True, timeout=5)
             if r.returncode == 0:
@@ -64,15 +71,35 @@ def get_adb_path() -> str:
             continue
     return ""
 
-# ─── App Config ──────────────────────────────────────────────────────────────
-PACKAGE   = "com.roycommunication.fonex"
-RECEIVER  = ".MyDeviceAdminReceiver"
-ACTIVITY  = ".MainActivity"
-APK_PATHS = [
-    os.path.join("..", "build", "app", "outputs", "flutter-apk", "app-release.apk"),
-    os.path.join("..", "build", "app", "outputs", "flutter-apk", "app-debug.apk"),
-]
-TOTAL_STEPS = 7
+# ─── APK Path ─────────────────────────────────────────────────────────────────
+def get_bundled_apk() -> str:
+    """Find bundled APK — checks _MEIPASS first. Extracts to temp if needed for ADB."""
+    meipass = _runtime_dir()
+    exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else meipass
+
+    # Priority 1: Bundled APK
+    bundled_path = os.path.join(meipass, "fonex.apk")
+    if os.path.exists(bundled_path):
+        return bundled_path
+
+    # Priority 2: Next to EXE
+    local_path = os.path.join(exe_dir, "fonex.apk")
+    if os.path.exists(local_path):
+        return local_path
+        
+    # Priority 3: Dev environment Flutter build
+    dev_path = os.path.normpath(os.path.join(exe_dir, "..", "build", "app", "outputs", "flutter-apk", "app-release.apk"))
+    if os.path.exists(dev_path):
+        return dev_path
+
+    return ""
+
+# ─── App Config ───────────────────────────────────────────────────────────────
+PACKAGE      = "com.roycommunication.fonex"
+RECEIVER     = ".MyDeviceAdminReceiver"
+ACTIVITY     = ".MainActivity"
+IS_BUNDLED   = getattr(sys, "frozen", False)   # True when running as .exe
+TOTAL_STEPS  = 7
 
 # ─── Utility ─────────────────────────────────────────────────────────────────
 def run_adb(adb: str, *args, timeout: int = 30) -> Tuple[int, str, str]:
@@ -246,7 +273,7 @@ class FonexProvisioner(ctk.CTk):
         step_map = {
             0: self._show_step_adb,
             1: self._start_step_device,
-            2: self._show_step_apk,
+            2: self._show_step_apk,   # auto-skipped when APK is bundled
             3: self._start_step_install,
             4: self._start_step_owner,
             5: self._show_step_done,
@@ -256,11 +283,12 @@ class FonexProvisioner(ctk.CTk):
 
     def _go_back(self):
         self._cancel_poll()
+        # When bundled, skip APK step on back navigation too
         step_map = {
             1: self._show_step_welcome,
             2: self._show_step_adb,
-            3: self._start_step_device,
-            4: self._show_step_apk,
+            3: self._start_step_device if IS_BUNDLED else self._show_step_apk,
+            4: self._show_step_apk if not IS_BUNDLED else self._start_step_device,
         }
         if self.current_step in step_map:
             step_map[self.current_step]()
@@ -432,6 +460,7 @@ class FonexProvisioner(ctk.CTk):
         self._set_nav(back=True, next_=False, next_text="Waiting…")
 
         self._device_found = False
+        self._device_manufacturer = ""
 
         outer = ctk.CTkFrame(self.content, fg_color="transparent")
         outer.place(relx=0.5, rely=0.5, anchor="center")
@@ -496,7 +525,12 @@ class FonexProvisioner(ctk.CTk):
 
             if connected:
                 serial = connected[0].split()[0]
-                self.after(0, lambda: self._on_device_found(serial))
+                # Get device manufacturer for special handling
+                brand = ""
+                rc_prop, out_prop, _ = run_adb(self.adb_path, "-s", serial, "shell", "getprop", "ro.product.manufacturer")
+                if rc_prop == 0 and out_prop:
+                    brand = out_prop.strip().lower()
+                self.after(0, lambda: self._on_device_found(serial, brand))
             elif unauthorized:
                 self.after(0, lambda: self._device_status_lbl.configure(
                     text="⚠️  Phone connected but not authorized",
@@ -509,45 +543,65 @@ class FonexProvisioner(ctk.CTk):
 
         threading.Thread(target=check, daemon=True).start()
 
-    def _on_device_found(self, serial: str):
+    def _on_device_found(self, serial: str, brand: str):
         self._device_found = True
+        self._device_manufacturer = brand
         self._cancel_poll()
-        self._device_status_lbl.configure(
-            text=f"✅  Phone connected!  ({serial})", text_color=GREEN)
-        self._device_sub_lbl.configure(
-            text="Great — the phone is ready. Click Next to continue.",
-            text_color=TEXT_SEC)
+
+        status_text = f"✅  Phone connected!  ({serial})"
+        if brand:
+             status_text += f" [{brand.capitalize()}]"
+
+        self._device_status_lbl.configure(text=status_text, text_color=GREEN)
+
+        if brand in ["xiaomi", "redmi", "poco"]:
+            self._device_sub_lbl.configure(
+                text="⚠️ XIAOMI DETECTED: You MUST enable 'USB debugging (Security settings)' in Developer Options, or setup will fail.",
+                text_color=ORANGE,
+                font=ctk.CTkFont("Arial", 12, "bold"))
+        elif brand in ["vivo", "iqoo"]:
+             self._device_sub_lbl.configure(
+                text="⚠️ VIVO DETECTED: Ensure 'USB Data Tracking' or similar security options don't block app installation.",
+                text_color=ORANGE)
+        elif brand in ["oppo", "realme"]:
+            self._device_sub_lbl.configure(
+                text="⚠️ OPPO DETECTED: Ensure you are signed into the OEM account if required for USB app installation.",
+                text_color=ORANGE)
+        else:
+            self._device_sub_lbl.configure(
+                text="Great — the phone is ready. Click Next to continue.",
+                text_color=TEXT_SEC)
+
         self._set_nav(back=True, next_=True, next_text="Next  →")
 
     # =========================================================================
     # STEP 3 — APK Setup
+    # When bundled as EXE, this step auto-detects and skips to install.
     # =========================================================================
     def _show_step_apk(self):
         self.current_step = 3
+
+        # Auto-detect bundled or nearby APK
+        auto_apk = get_bundled_apk()
+
+        # If running as bundled EXE and APK found — skip this screen entirely
+        if IS_BUNDLED and auto_apk:
+            self.apk_path = auto_apk
+            self._start_step_install()
+            return
+
         self._clear()
         self._update_step_bar(3)
 
         outer = ctk.CTkFrame(self.content, fg_color="transparent")
         outer.place(relx=0.5, rely=0.5, anchor="center")
 
-        ctk.CTkLabel(outer, text="📦  Select FONEX APK",
+        ctk.CTkLabel(outer, text="📦  FONEX APK",
                      font=ctk.CTkFont("Arial", 22, "bold"), text_color=TEXT).pack(pady=(0, 6))
         ctk.CTkLabel(outer, text="The FONEX app file (.apk) will be installed on the phone.",
                      font=ctk.CTkFont("Arial", 12), text_color=TEXT_SEC).pack(pady=(0, 16))
 
-        # Auto-detect
-        auto_apk = ""
-        base = os.path.dirname(os.path.abspath(
-            sys.executable if getattr(sys, "frozen", False) else __file__))
-        for rel in APK_PATHS:
-            full = os.path.normpath(os.path.join(base, rel))
-            if os.path.exists(full):
-                auto_apk = full
-                break
-
-        self._apk_var = tk.StringVar(value=auto_apk if auto_apk else "")
-
-        status_text = "✅  APK automatically detected:" if auto_apk else "⚠️  APK not found automatically — please select it below."
+        status_text = "✅  APK found:" if auto_apk else "⚠️  APK not found — please select it manually."
         status_color = GREEN if auto_apk else ORANGE
         self._apk_status_lbl = ctk.CTkLabel(
             outer, text=status_text,
@@ -556,29 +610,26 @@ class FonexProvisioner(ctk.CTk):
         )
         self._apk_status_lbl.pack(pady=(0, 8))
 
-        # Path display
+        # Path display card
         path_card = ctk.CTkFrame(outer, fg_color=CARD, corner_radius=10,
                                   border_width=1, border_color=BORDER)
         path_card.pack(fill="x", padx=20, ipady=6, ipadx=10)
-
         self._apk_path_lbl = ctk.CTkLabel(
             path_card,
-            text=auto_apk if auto_apk else "No APK selected",
+            text=auto_apk if auto_apk else "No APK found — use Browse below",
             font=ctk.CTkFont("Arial", 11),
             text_color=TEXT_SEC if auto_apk else TEXT_MUTED,
-            wraplength=450,
-            anchor="w",
+            wraplength=450, anchor="w",
         )
         self._apk_path_lbl.pack(padx=10, pady=6, anchor="w")
 
         # Browse button
-        browse_btn = ctk.CTkButton(
+        ctk.CTkButton(
             outer, text="📂  Browse for APK file…",
             fg_color="transparent", border_color=BORDER, border_width=1,
             text_color=TEXT_SEC, hover_color=CARD,
             command=self._browse_apk,
-        )
-        browse_btn.pack(pady=(14, 0))
+        ).pack(pady=(14, 0))
 
         self.apk_path = auto_apk
         self._set_nav(back=True, next_=bool(auto_apk), next_text="Install  →", next_color=ACCENT)

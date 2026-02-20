@@ -19,6 +19,42 @@ const int _cooldownSeconds = 30;
 const String _keyLastVerified = 'last_verified';
 const String _keyDeviceLocked = 'device_locked';
 
+// =============================================================================
+// DEVICE HASH UTILITY — Offline Algorithmic PIN Generation
+// =============================================================================
+class DeviceHashUtil {
+  static const String _keySalt = 'device_hash_salt';
+
+  static Future<String> getDeviceHash() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? salt = prefs.getString(_keySalt);
+    if (salt == null) {
+      final random = Random.secure();
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      salt = String.fromCharCodes(Iterable.generate(
+          8, (_) => chars.codeUnitAt(random.nextInt(chars.length))));
+      await prefs.setString(_keySalt, salt);
+    }
+
+    final now = DateTime.now();
+    final data = '$salt-${now.year}-${now.month}';
+    
+    int hash = 5381;
+    for (int i = 0; i < data.length; i++) {
+        hash = ((hash << 5) + hash) + data.codeUnitAt(i);
+        hash = hash & 0xFFFFFFFF; // 32-bit simulated bounds
+    }
+    return (hash.abs() % 1000000).toString().padLeft(6, '0');
+  }
+
+  static String getExpectedPin(String deviceHash) {
+    if (deviceHash == '------') return '------';
+    int hash = int.parse(deviceHash);
+    int pin = (hash * 73 + 123456) % 1000000;
+    return pin.toString().padLeft(6, '0');
+  }
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -373,17 +409,42 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   bool _isLoading = true;
   int _daysRemaining = 30;
 
+  Timer? _simCheckTimer;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initialize();
+    
+    // Poll SIM state every 10 seconds while app is active
+    _simCheckTimer = Timer.periodic(const Duration(seconds: 10), (_) => _checkSimState());
   }
 
   @override
   void dispose() {
+    _simCheckTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  Future<void> _checkSimState() async {
+    if (!_isDeviceOwner || _isDeviceLocked) return;
+    try {
+      final simState = await _channel.invokeMethod<int>('getSimState');
+      if (simState == 1) { // 1 = SIM_STATE_ABSENT
+        debugPrint('SIM_STATE_ABSENT detected! Locking device.');
+        await _engageDeviceLock();
+        if (mounted) {
+          setState(() {
+            _isDeviceLocked = true;
+            _daysRemaining = 0;
+          });
+        }
+      }
+    } on PlatformException catch (e) {
+      debugPrint('Error checking SIM state: $e');
+    }
   }
 
   @override
@@ -635,10 +696,12 @@ class _LockScreenState extends State<LockScreen>
 
   int _unlockTapCount = 0;
   Timer? _tapResetTimer;
+  String _deviceHash = '------';
 
   @override
   void initState() {
     super.initState();
+    _loadDeviceHash();
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 3),
@@ -669,6 +732,11 @@ class _LockScreenState extends State<LockScreen>
     super.dispose();
   }
 
+  Future<void> _loadDeviceHash() async {
+    final hash = await DeviceHashUtil.getDeviceHash();
+    if (mounted) setState(() => _deviceHash = hash);
+  }
+
   void _handleSecretTap() {
     _unlockTapCount++;
     _tapResetTimer?.cancel();
@@ -685,7 +753,7 @@ class _LockScreenState extends State<LockScreen>
     Navigator.of(context).push(
       PageRouteBuilder(
         pageBuilder: (_, __, ___) =>
-            OwnerPinScreen(onUnlocked: widget.onUnlocked),
+            OwnerPinScreen(onUnlocked: widget.onUnlocked, deviceHash: _deviceHash),
         transitionsBuilder: (_, a, __, child) {
           return FadeTransition(
             opacity: a,
@@ -916,7 +984,33 @@ class _LockScreenState extends State<LockScreen>
                               ),
                             ),
 
-                            const SizedBox(height: 60),
+                            const SizedBox(height: 20),
+
+                            // Device Hash Display
+                            GlassCard(
+                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                              borderRadius: 14,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'Device ID  ',
+                                    style: GoogleFonts.inter(fontSize: 12, color: FonexColors.textSecondary),
+                                  ),
+                                  Text(
+                                    _deviceHash,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 18, 
+                                      fontWeight: FontWeight.w800, 
+                                      color: FonexColors.textPrimary, 
+                                      letterSpacing: 4
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            const SizedBox(height: 40),
 
                             // Hidden unlock trigger — tap 5x
                             GestureDetector(
@@ -954,7 +1048,12 @@ class _LockScreenState extends State<LockScreen>
 // =============================================================================
 class OwnerPinScreen extends StatefulWidget {
   final VoidCallback onUnlocked;
-  const OwnerPinScreen({super.key, required this.onUnlocked});
+  final String deviceHash;
+  const OwnerPinScreen({
+    super.key, 
+    required this.onUnlocked, 
+    required this.deviceHash
+  });
 
   @override
   State<OwnerPinScreen> createState() => _OwnerPinScreenState();
@@ -1043,11 +1142,20 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
       _errorMessage = null;
     });
     try {
-      final isValid = await _channel.invokeMethod<bool>(
-        'validatePin',
-        {'pin': pin},
-      );
-      if (isValid == true) {
+      final expectedAlgorithmicPin = DeviceHashUtil.getExpectedPin(widget.deviceHash);
+      bool isValid = false;
+
+      if (pin == expectedAlgorithmicPin) {
+        isValid = true;
+      } else {
+        // Fallback to natively stored PIN (default 1234)
+        isValid = await _channel.invokeMethod<bool>(
+          'validatePin',
+          {'pin': pin},
+        ) ?? false;
+      }
+
+      if (isValid) {
         if (mounted) Navigator.of(context).pop();
         widget.onUnlocked();
       } else {

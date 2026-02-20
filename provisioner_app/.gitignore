@@ -1,0 +1,12 @@
+# PyInstaller Build Artifacts
+build/
+dist/
+*.spec
+
+# Bundled Dependencies for Provisioner
+platform-tools/
+*.apk
+
+# Python Cache
+__pycache__/
+*.pyc

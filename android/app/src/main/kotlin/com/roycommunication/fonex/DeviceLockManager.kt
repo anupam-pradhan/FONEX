@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.UserManager
 import android.util.Log
 import android.view.View
 import android.view.WindowInsets
@@ -65,6 +66,17 @@ class DeviceLockManager(private val context: Context) {
                 )
             }
 
+            // Apply critical User Restrictions (Block Factory Reset, Safe Mode, ADB, etc.)
+            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
+            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
+            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES)
+            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
+
+            // Enforce automatic time to prevent local timer tampering
+            devicePolicyManager.setGlobalSetting(adminComponent, android.provider.Settings.Global.AUTO_TIME, "1")
+            devicePolicyManager.setAutoTimeRequired(adminComponent, true)
+
+
             // Start Lock Task
             activity.startLockTask()
 
@@ -95,6 +107,12 @@ class DeviceLockManager(private val context: Context) {
 
             // Restore status bar
             restoreStatusBar(activity)
+
+            // Remove User Restrictions
+            devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
+            devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
+            devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES)
+            devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
 
             // Exit immersive mode
             disableImmersiveMode(activity)
