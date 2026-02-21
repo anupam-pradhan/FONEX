@@ -6,6 +6,8 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import android.content.Context
 import android.telephony.TelephonyManager
+import android.os.PowerManager
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -25,6 +27,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private lateinit var deviceLockManager: DeviceLockManager
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,6 +37,43 @@ class MainActivity : FlutterActivity() {
         if (deviceLockManager.isDeviceLocked() && deviceLockManager.isDeviceOwner()) {
             Log.i(TAG, "Device locked state detected — re-engaging lock")
             deviceLockManager.enableDeviceLock(this)
+            // Enable wake lock and keep screen on when locked
+            enableWakeLock()
+        }
+    }
+    
+    override fun onDestroy() {
+        releaseWakeLock()
+        super.onDestroy()
+    }
+    
+    private fun enableWakeLock() {
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "FONEX::WakeLock"
+            )
+            wakeLock?.acquire(10 * 60 * 60 * 1000L) // 10 hours
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            Log.i(TAG, "Wake lock enabled")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to enable wake lock: ${e.message}")
+        }
+    }
+    
+    private fun releaseWakeLock() {
+        try {
+            wakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                }
+            }
+            wakeLock = null
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            Log.i(TAG, "Wake lock released")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to release wake lock: ${e.message}")
         }
     }
 
@@ -48,11 +88,17 @@ class MainActivity : FlutterActivity() {
 
                 "startDeviceLock" -> {
                     val success = deviceLockManager.enableDeviceLock(this)
+                    if (success) {
+                        enableWakeLock() // Enable wake lock when device is locked
+                    }
                     result.success(success)
                 }
 
                 "stopDeviceLock" -> {
                     val success = deviceLockManager.disableDeviceLock(this)
+                    if (success) {
+                        releaseWakeLock() // Release wake lock when device is unlocked
+                    }
                     result.success(success)
                 }
 
@@ -126,6 +172,33 @@ class MainActivity : FlutterActivity() {
                 "clearDeviceOwner" -> {
                     val success = deviceLockManager.clearDeviceOwner()
                     result.success(success)
+                }
+
+                "isUninstallBlocked" -> {
+                    result.success(deviceLockManager.isUninstallBlocked())
+                }
+
+                "setPaidInFull" -> {
+                    val paid = call.argument<Boolean>("paid") ?: false
+                    val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+                    prefs.edit().putBoolean("is_paid_in_full", paid).apply()
+                    if (paid) {
+                        // Remove restrictions when paid - allow factory reset and uninstall
+                        deviceLockManager.disableDeviceLock(this)
+                        deviceLockManager.enforceFactoryResetBlock() // This will remove the restriction
+                    } else {
+                        // Re-enforce restrictions if payment status changes
+                        deviceLockManager.enforceFactoryResetBlock()
+                    }
+                    result.success(true)
+                }
+                
+                "isFactoryResetBlocked" -> {
+                    result.success(deviceLockManager.isFactoryResetBlocked())
+                }
+                
+                "enforceFactoryResetBlock" -> {
+                    result.success(deviceLockManager.enforceFactoryResetBlock())
                 }
 
                 else -> {

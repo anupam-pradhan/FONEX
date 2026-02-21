@@ -71,6 +71,10 @@ class DeviceLockManager(private val context: Context) {
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES)
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
+            // Prevent app uninstallation
+            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+            // Prevent removing users (additional security)
+            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_REMOVE_USER)
 
             // Enforce automatic time to prevent local timer tampering
             devicePolicyManager.setGlobalSetting(adminComponent, android.provider.Settings.Global.AUTO_TIME, "1")
@@ -108,11 +112,20 @@ class DeviceLockManager(private val context: Context) {
             // Restore status bar
             restoreStatusBar(activity)
 
-            // Remove User Restrictions
-            devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
+            // Remove User Restrictions (only if EMI is paid in full)
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
+            
+            if (isPaidInFull) {
+                // Allow factory reset and uninstall only after EMI is fully paid
+                devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
+                devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+            }
+            
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES)
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
+            devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_REMOVE_USER)
 
             // Exit immersive mode
             disableImmersiveMode(activity)
@@ -205,18 +218,93 @@ class DeviceLockManager(private val context: Context) {
 
     /**
      * Permanently remove Device Owner status (Paid in Full mode).
+     * Also removes all restrictions to allow factory reset and uninstall.
      */
     fun clearDeviceOwner(): Boolean {
         return try {
             if (isDeviceOwner()) {
+                // Remove all restrictions before clearing device owner
+                devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
+                devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+                devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
+                devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES)
+                devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
+                devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_REMOVE_USER)
+                
                 devicePolicyManager.clearDeviceOwnerApp(context.packageName)
-                Log.i(TAG, "Device Owner status successfully cleared.")
+                Log.i(TAG, "Device Owner status successfully cleared. Factory reset and uninstall now allowed.")
                 true
             } else {
                 false
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear Device Owner: ${e.message}")
+            false
+        }
+    }
+    
+    /**
+     * Check if app uninstallation is blocked.
+     */
+    fun isUninstallBlocked(): Boolean {
+        return try {
+            if (isDeviceOwner()) {
+                val restrictions = devicePolicyManager.getUserRestrictions(adminComponent)
+                restrictions.containsKey(UserManager.DISALLOW_UNINSTALL_APPS)
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking uninstall block: ${e.message}")
+            false
+        }
+    }
+    
+    /**
+     * Check if factory reset is blocked.
+     * Returns true if factory reset is blocked (EMI not paid), false if allowed (EMI paid).
+     */
+    fun isFactoryResetBlocked(): Boolean {
+        return try {
+            if (isDeviceOwner()) {
+                val restrictions = devicePolicyManager.getUserRestrictions(adminComponent)
+                val isBlocked = restrictions.containsKey(UserManager.DISALLOW_FACTORY_RESET)
+                val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
+                // Factory reset is blocked if restriction exists AND EMI is not paid
+                isBlocked && !isPaidInFull
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking factory reset block: ${e.message}")
+            false
+        }
+    }
+    
+    /**
+     * Re-apply factory reset blocking if EMI is not paid.
+     * Called after checking payment status from server.
+     */
+    fun enforceFactoryResetBlock(): Boolean {
+        return try {
+            if (isDeviceOwner()) {
+                val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
+                if (!isPaidInFull) {
+                    // Re-apply restriction if not paid
+                    devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
+                    Log.i(TAG, "Factory reset blocking enforced (EMI not paid)")
+                    true
+                } else {
+                    // Remove restriction if paid
+                    devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
+                    Log.i(TAG, "Factory reset allowed (EMI paid in full)")
+                    false
+                }
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error enforcing factory reset block: ${e.message}")
             false
         }
     }

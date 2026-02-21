@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'config.dart';
 
 // =============================================================================
 // FONEX Powered by Roy Communication — Device Control System
@@ -15,20 +16,20 @@ import 'dart:convert';
 // Uses Device Owner + DevicePolicyManager + Lock Task (no root, no Accessibility).
 // =============================================================================
 
-const String _channelName = 'device.lock/channel';
-const int _lockAfterDays = 30;
-// SIM absent grace period before locking (7 days)
-const int _simAbsentLockDays = 7;
-const int _maxPinAttempts = 3;
-const int _cooldownSeconds = 30;
-const String _keyLastVerified = 'last_verified';
-const String _keyDeviceLocked = 'device_locked';
-const String _keySimAbsentSince = 'sim_absent_since'; // timestamp ms
-// Server API — update to your actual server URL
-const String _serverBaseUrl = 'https://fonex-backend-mobile-system.vercel.app/api/v1/devices';
-// Support phone numbers for emergency call on lock screen
-const String _supportPhone1 = '+918388855549';
-const String _supportPhone2 = '+919635252455';
+// Use configuration from config.dart
+const String _channelName = FonexConfig.channelName;
+const int _lockAfterDays = FonexConfig.lockAfterDays;
+const int _simAbsentLockDays = FonexConfig.simAbsentLockDays;
+const int _maxPinAttempts = FonexConfig.maxPinAttempts;
+const int _cooldownSeconds = FonexConfig.cooldownSeconds;
+const String _keyLastVerified = FonexConfig.keyLastVerified;
+const String _keyDeviceLocked = FonexConfig.keyDeviceLocked;
+const String _keySimAbsentSince = FonexConfig.keySimAbsentSince;
+const String _serverBaseUrl = FonexConfig.serverBaseUrl;
+const String _supportPhone1 = FonexConfig.supportPhone1;
+const String _supportPhone2 = FonexConfig.supportPhone2;
+const String _storeName = FonexConfig.storeName;
+const String _storeAddress = FonexConfig.storeAddress;
 
 // =============================================================================
 // DEVICE HASH UTILITY — Offline Algorithmic PIN Generation
@@ -417,6 +418,181 @@ class FonexLogo extends StatelessWidget {
 }
 
 // =============================================================================
+// WALLPAPER WITH STORE NAME AND EMI INFO
+// =============================================================================
+class StoreWallpaper extends StatelessWidget {
+  final String storeName;
+  final int daysRemaining;
+  final bool isLocked;
+  final DateTime? nextPaymentDate;
+  final Widget child;
+
+  const StoreWallpaper({
+    super.key,
+    required this.storeName,
+    required this.daysRemaining,
+    required this.isLocked,
+    this.nextPaymentDate,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            FonexColors.bg,
+            FonexColors.surface,
+            FonexColors.card,
+            FonexColors.bg,
+          ],
+        ),
+      ),
+      child: Stack(
+        children: [
+          // Background pattern
+          Positioned.fill(
+            child: CustomPaint(
+              painter: _WallpaperPatternPainter(),
+            ),
+          ),
+          // Store info overlay at top
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      FonexColors.card.withValues(alpha: 0.95),
+                      FonexColors.card.withValues(alpha: 0.7),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          storeName,
+                          style: GoogleFonts.inter(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: FonexColors.textPrimary,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'EMI Payment System',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            color: FonexColors.textSecondary,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: isLocked
+                            ? FonexColors.red.withValues(alpha: 0.2)
+                            : daysRemaining <= 7
+                                ? FonexColors.orange.withValues(alpha: 0.2)
+                                : FonexColors.green.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isLocked
+                              ? FonexColors.red
+                              : daysRemaining <= 7
+                                  ? FonexColors.orange
+                                  : FonexColors.green,
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            isLocked ? 'LOCKED' : '$daysRemaining Days',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: isLocked
+                                  ? FonexColors.red
+                                  : daysRemaining <= 7
+                                      ? FonexColors.orange
+                                      : FonexColors.green,
+                            ),
+                          ),
+                          if (nextPaymentDate != null && !isLocked)
+                            Text(
+                              'Due: ${_formatDate(nextPaymentDate!)}',
+                              style: GoogleFonts.inter(
+                                fontSize: 9,
+                                color: FonexColors.textMuted,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Main content
+          child,
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
+  }
+}
+
+class _WallpaperPatternPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = FonexColors.accent.withValues(alpha: 0.03)
+      ..style = PaintingStyle.fill;
+
+    // Draw subtle grid pattern
+    for (double x = 0; x < size.width; x += 60) {
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x, size.height),
+        paint..color = FonexColors.accent.withValues(alpha: 0.02),
+      );
+    }
+    for (double y = 0; y < size.height; y += 60) {
+      canvas.drawLine(
+        Offset(0, y),
+        Offset(size.width, y),
+        paint..color = FonexColors.accent.withValues(alpha: 0.02),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// =============================================================================
 // DEVICE CONTROL HOME — Main controller
 // =============================================================================
 class DeviceControlHome extends StatefulWidget {
@@ -435,21 +611,36 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   bool _isLoading = true;
   bool _isPaidInFull = false;
   int _daysRemaining = 30;
+  bool _isServerConnected = false;
+  String _serverStatusMessage = 'Connecting...';
+  DateTime? _lastServerSync;
+  bool _isConnecting = false;
 
   Timer? _simCheckTimer;
+  Timer? _serverCheckInTimer;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initialize();
-    // Poll SIM state every 60 seconds while app is active
-    _simCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) => _checkSimState());
+    // Poll SIM state every 60 seconds while app is active (optimized: only when needed)
+    _simCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted && !_isPaidInFull) _checkSimState();
+    });
+    // Periodic server check-in every 5 minutes for accurate EMI status (optimized: debounced)
+    _serverCheckInTimer = Timer.periodic(
+      const Duration(minutes: 5),
+      (_) {
+        if (mounted && !_isConnecting) _serverCheckIn();
+      },
+    );
   }
 
   @override
   void dispose() {
     _simCheckTimer?.cancel();
+    _serverCheckInTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -493,9 +684,20 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _checkTimerAndLock();
-      _checkSimState();
+    // Optimize: Only check when app resumes, not on every state change
+    if (state == AppLifecycleState.resumed && mounted) {
+      // Debounce rapid state changes
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          _checkTimerAndLock();
+          _checkSimState();
+          // Immediate server check-in when app resumes for accurate status
+          if (!_isConnecting) _serverCheckIn();
+        }
+      });
+    } else if (state == AppLifecycleState.paused) {
+      // Clean up resources when app goes to background to prevent hanging
+      // Timers continue but heavy operations are paused
     }
   }
 
@@ -603,8 +805,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   }
 
   /// Backend check-in — tells server device state and obeys server commands.
-  /// Fails silently if offline.
-  Future<void> _serverCheckIn() async {
+  /// Fails silently if offline. Includes retry logic for better accuracy.
+  Future<void> _serverCheckIn({int retryCount = 0}) async {
+    const maxRetries = 2;
     try {
       final deviceHash = await DeviceHashUtil.getDeviceHash();
       String imei = "Not Found";
@@ -622,7 +825,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       } catch (_) {}
 
       try {
-        debugPrint('Sending check-in payload: ${jsonEncode({
+        debugPrint('Sending check-in payload (attempt ${retryCount + 1}): ${jsonEncode({
           'device_hash': deviceHash,
           'imei': imei,
           'is_locked': _isDeviceLocked,
@@ -632,13 +835,17 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
         final response = await http.post(
           Uri.parse('$_serverBaseUrl/checkin'),
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'FONEX-Device/1.0',
+          },
           body: jsonEncode({
             'device_hash': deviceHash,
             'imei': imei,
             'is_locked': _isDeviceLocked,
             'days_remaining': _daysRemaining,
             'metadata': metadata,
+            'timestamp': DateTime.now().toIso8601String(),
           }),
         ).timeout(const Duration(seconds: 10));
 
@@ -646,50 +853,123 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         debugPrint('Server check-in HTTP body: ${response.body}');
 
         if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final rawAction = data['action'] as String? ?? 'none';
-        final action = rawAction.toLowerCase();
-        
-        debugPrint('Server check-in response: action=$action');
-        switch (action) {
-          case 'lock':
-            await _engageDeviceLock();
-            if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
-            break;
-          case 'unlock':
-            await _disengageDeviceLock();
-            break;
-          case 'extend':
-          case 'extend_days':
-            final days = data['days'] as int? ?? _lockAfterDays;
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setInt(
-              _keyLastVerified,
-              DateTime.now().subtract(Duration(days: _lockAfterDays - days)).millisecondsSinceEpoch,
-            );
-            if (mounted) setState(() => _daysRemaining = days);
-            break;
-          case 'paid_in_full':
-          case 'mark_paid_in_full':
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setBool('is_paid_in_full', true);
-            if (mounted) setState(() => _isPaidInFull = true);
-            await _disengageDeviceLock();
-            try {
-              await _channel.invokeMethod('clearDeviceOwner');
-            } on PlatformException catch (e) {
-              debugPrint('Error clearing device owner: $e');
-            }
-            break;
-          default:
-            break;
+          if (mounted) {
+            setState(() {
+              _isServerConnected = true;
+              _serverStatusMessage = 'Connected';
+              _lastServerSync = DateTime.now();
+            });
+          }
+          
+          final data = jsonDecode(response.body) as Map<String, dynamic>;
+          final rawAction = data['action'] as String? ?? 'none';
+          final action = rawAction.toLowerCase();
+          
+          debugPrint('Server check-in response: action=$action');
+          
+          // Execute server commands with accuracy
+          switch (action) {
+            case 'lock':
+              await _engageDeviceLock();
+              if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
+              debugPrint('Device locked by server command');
+              break;
+            case 'unlock':
+              await _disengageDeviceLock();
+              debugPrint('Device unlocked by server command');
+              break;
+            case 'extend':
+            case 'extend_days':
+              final days = data['days'] as int? ?? _lockAfterDays;
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setInt(
+                _keyLastVerified,
+                DateTime.now().subtract(Duration(days: _lockAfterDays - days)).millisecondsSinceEpoch,
+              );
+              if (mounted) setState(() => _daysRemaining = days);
+              debugPrint('Device extended by server: $days days');
+              break;
+            case 'paid_in_full':
+            case 'mark_paid_in_full':
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('is_paid_in_full', true);
+              if (mounted) setState(() => _isPaidInFull = true);
+              await _disengageDeviceLock();
+              try {
+                await _channel.invokeMethod('clearDeviceOwner');
+                debugPrint('Device marked as paid in full - restrictions removed');
+              } on PlatformException catch (e) {
+                debugPrint('Error clearing device owner: $e');
+              }
+              break;
+            case 'none':
+              debugPrint('No action required from server');
+              break;
+            default:
+              debugPrint('Unknown server action: $action');
+              break;
+          }
+        } else if (response.statusCode >= 500 && retryCount < maxRetries) {
+          // Retry on server errors with exponential backoff
+          debugPrint('Server error ${response.statusCode}, retrying in ${(retryCount + 1) * 2} seconds...');
+          await Future.delayed(Duration(seconds: (retryCount + 1) * 2));
+          await _serverCheckIn(retryCount: retryCount + 1);
+        } else {
+          debugPrint('Failed to check in. Server returned status: ${response.statusCode}');
         }
-      } else {
-        debugPrint('Failed to check in. Server returned status: ${response.statusCode}');
+      } on TimeoutException {
+        if (mounted) {
+          setState(() {
+            _isServerConnected = false;
+            _serverStatusMessage = 'Connection timeout';
+          });
+        }
+        debugPrint('Server check-in timeout');
+        if (retryCount < maxRetries) {
+          debugPrint('Retrying after timeout...');
+          await Future.delayed(Duration(seconds: (retryCount + 1) * 2));
+          await _serverCheckIn(retryCount: retryCount + 1);
+        }
+      } catch (e, stacktrace) {
+        if (mounted) {
+          setState(() {
+            _isServerConnected = false;
+            _serverStatusMessage = 'Connection failed';
+          });
+        }
+        debugPrint('Error during _serverCheckIn: $e');
+        if (retryCount < maxRetries && e is! FormatException) {
+          // Retry on network errors, but not on JSON parsing errors
+          debugPrint('Retrying after error...');
+          await Future.delayed(Duration(seconds: (retryCount + 1) * 2));
+          await _serverCheckIn(retryCount: retryCount + 1);
+        } else {
+          debugPrint('Fatal error during _serverCheckIn: $e\n$stacktrace');
+        }
       }
     } catch (e, stacktrace) {
+      if (mounted) {
+        setState(() {
+          _isServerConnected = false;
+          _serverStatusMessage = 'Connection error';
+        });
+      }
       debugPrint('Fatal error during _serverCheckIn: $e\n$stacktrace');
+    } finally {
+      if (mounted) {
+        setState(() => _isConnecting = false);
+      }
     }
+  }
+
+  /// Manual server connection retry
+  Future<void> _manualServerConnect() async {
+    if (_isConnecting) return;
+    setState(() {
+      _isConnecting = true;
+      _serverStatusMessage = 'Connecting...';
+    });
+    await _serverCheckIn();
   }
 
   // DEV: simulate 30-day expiry for testing
@@ -708,14 +988,32 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   Widget build(BuildContext context) {
     if (_isLoading) return const SplashScreen();
 
-    if (_isDeviceLocked) {
-      return LockScreen(onUnlocked: _disengageDeviceLock);
-    }
+    final nextPaymentDate = _lastServerSync != null
+        ? _lastServerSync!.add(Duration(days: _daysRemaining))
+        : null;
 
-    return NormalModeScreen(
-      isDeviceOwner: _isDeviceOwner,
+    return StoreWallpaper(
+      storeName: _storeName,
       daysRemaining: _daysRemaining,
-      onSimulateExpiry: _devSimulateExpiry,
+      isLocked: _isDeviceLocked,
+      nextPaymentDate: nextPaymentDate,
+      child: _isDeviceLocked
+          ? LockScreen(
+              onUnlocked: _disengageDeviceLock,
+              storeName: _storeName,
+              supportPhone1: _supportPhone1,
+              supportPhone2: _supportPhone2,
+            )
+          : NormalModeScreen(
+              isDeviceOwner: _isDeviceOwner,
+              daysRemaining: _daysRemaining,
+              onSimulateExpiry: _devSimulateExpiry,
+              isServerConnected: _isServerConnected,
+              serverStatusMessage: _serverStatusMessage,
+              lastServerSync: _lastServerSync,
+              onManualConnect: _manualServerConnect,
+              isConnecting: _isConnecting,
+            ),
     );
   }
 
@@ -975,18 +1273,579 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         ),
       ),
     );
-  
-  Widget build(BuildContext context) {
-    if (_isLoading) return const SplashScreen();
+  }
+}
 
-    if (_isDeviceLocked) {
-      return LockScreen(onUnlocked: _disengageDeviceLock);
+// =============================================================================
+// NORMAL MODE SCREEN — Main dashboard when device is unlocked
+// =============================================================================
+class NormalModeScreen extends StatefulWidget {
+  final bool isDeviceOwner;
+  final int daysRemaining;
+  final VoidCallback onSimulateExpiry;
+  final bool isServerConnected;
+  final String serverStatusMessage;
+  final DateTime? lastServerSync;
+  final VoidCallback onManualConnect;
+  final bool isConnecting;
+
+  const NormalModeScreen({
+    super.key,
+    required this.isDeviceOwner,
+    required this.daysRemaining,
+    required this.onSimulateExpiry,
+    required this.isServerConnected,
+    required this.serverStatusMessage,
+    this.lastServerSync,
+    required this.onManualConnect,
+    required this.isConnecting,
+  });
+
+  @override
+  State<NormalModeScreen> createState() => _NormalModeScreenState();
+}
+
+class _NormalModeScreenState extends State<NormalModeScreen> {
+  Timer? _periodicCheckInTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Periodic server check-in every 5 minutes for accurate EMI status
+    _periodicCheckInTimer = Timer.periodic(
+      const Duration(minutes: 5),
+      (_) => _performServerCheckIn(),
+    );
+    // Initial check-in after 30 seconds
+    Future.delayed(const Duration(seconds: 30), _performServerCheckIn);
+  }
+
+  @override
+  void dispose() {
+    _periodicCheckInTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _performServerCheckIn() async {
+    try {
+      final deviceHash = await DeviceHashUtil.getDeviceHash();
+      final channel = const MethodChannel(_channelName);
+      String imei = "Not Found";
+      Map<String, dynamic> metadata = {};
+      
+      try {
+        final info = await channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+        if (info != null) {
+          if (info.containsKey('imei')) imei = info['imei'] as String;
+          metadata = {
+            'model': info['deviceModel']?.toString() ?? 'Unknown',
+            'manufacturer': info['manufacturer']?.toString() ?? 'Unknown',
+            'android_version': info['androidVersion'] ?? 0,
+          };
+        }
+      } catch (_) {}
+
+      final prefs = await SharedPreferences.getInstance();
+      final isLocked = prefs.getBool(_keyDeviceLocked) ?? false;
+      final lastVerifiedMs = prefs.getInt(_keyLastVerified);
+      int daysRemaining = widget.daysRemaining;
+      
+      if (lastVerifiedMs != null) {
+        final lastVerified = DateTime.fromMillisecondsSinceEpoch(lastVerifiedMs);
+        final daysSince = DateTime.now().difference(lastVerified).inDays;
+        daysRemaining = (_lockAfterDays - daysSince).clamp(0, _lockAfterDays);
+      }
+
+      final response = await http.post(
+        Uri.parse('$_serverBaseUrl/checkin'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'device_hash': deviceHash,
+          'imei': imei,
+          'is_locked': isLocked,
+          'days_remaining': daysRemaining,
+          'metadata': metadata,
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final rawAction = data['action'] as String? ?? 'none';
+        final action = rawAction.toLowerCase();
+        
+        debugPrint('Server check-in response: action=$action');
+        
+        // Handle server commands
+        switch (action) {
+          case 'lock':
+            await channel.invokeMethod('startDeviceLock');
+            await prefs.setBool(_keyDeviceLocked, true);
+            if (mounted) {
+              // Navigate to lock screen will happen automatically on next build
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Device locked by server'),
+                  backgroundColor: FonexColors.red,
+                ),
+              );
+            }
+            break;
+          case 'unlock':
+            await channel.invokeMethod('stopDeviceLock');
+            await prefs.setBool(_keyDeviceLocked, false);
+            await prefs.setInt(_keyLastVerified, DateTime.now().millisecondsSinceEpoch);
+            break;
+          case 'extend':
+          case 'extend_days':
+            final days = data['days'] as int? ?? _lockAfterDays;
+            await prefs.setInt(
+              _keyLastVerified,
+              DateTime.now().subtract(Duration(days: _lockAfterDays - days)).millisecondsSinceEpoch,
+            );
+            if (mounted) setState(() {});
+            break;
+          case 'paid_in_full':
+          case 'mark_paid_in_full':
+            await prefs.setBool('is_paid_in_full', true);
+            await channel.invokeMethod('stopDeviceLock');
+            await channel.invokeMethod('clearDeviceOwner');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Device marked as paid in full'),
+                  backgroundColor: FonexColors.green,
+                ),
+              );
+            }
+            break;
+        }
+      }
+    } catch (e) {
+      debugPrint('Periodic server check-in failed: $e');
+    }
+  }
+
+  Widget _buildHeroStatus() {
+    final isHealthy = widget.isDeviceOwner && widget.daysRemaining > 0;
+    return GlassCard(
+      padding: const EdgeInsets.all(24),
+      borderColor: isHealthy
+          ? FonexColors.green.withValues(alpha: 0.3)
+          : FonexColors.red.withValues(alpha: 0.3),
+      child: Row(
+        children: [
+          GlowIcon(
+            icon: isHealthy ? Icons.check_circle_rounded : Icons.error_rounded,
+            color: isHealthy ? FonexColors.green : FonexColors.red,
+            size: 30,
+            containerSize: 60,
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isHealthy ? 'All Systems Operational' : 'Action Required',
+                  style: GoogleFonts.inter(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: FonexColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  isHealthy
+                      ? 'Device is fully protected and verified'
+                      : 'Device protection needs configuration',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: FonexColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildServerConnectionCard() {
+    final statusColor = widget.isServerConnected
+        ? FonexColors.green
+        : widget.isConnecting
+            ? FonexColors.orange
+            : FonexColors.red;
+    
+    String lastSyncText = 'Never';
+    if (widget.lastServerSync != null) {
+      final diff = DateTime.now().difference(widget.lastServerSync!);
+      if (diff.inMinutes < 1) {
+        lastSyncText = 'Just now';
+      } else if (diff.inMinutes < 60) {
+        lastSyncText = '${diff.inMinutes}m ago';
+      } else if (diff.inHours < 24) {
+        lastSyncText = '${diff.inHours}h ago';
+      } else {
+        lastSyncText = '${diff.inDays}d ago';
+      }
     }
 
-    return NormalModeScreen(
-      isDeviceOwner: _isDeviceOwner,
-      daysRemaining: _daysRemaining,
-      onSimulateExpiry: _devSimulateExpiry,
+    return GlassCard(
+      padding: const EdgeInsets.all(16),
+      borderColor: statusColor.withValues(alpha: 0.3),
+      child: Row(
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: statusColor,
+              boxShadow: [
+                BoxShadow(
+                  color: statusColor.withValues(alpha: 0.5),
+                  blurRadius: 8,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Server Status',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: FonexColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  widget.serverStatusMessage,
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    color: statusColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (widget.lastServerSync != null)
+                  Text(
+                    'Last sync: $lastSyncText',
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      color: FonexColors.textMuted,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (!widget.isServerConnected && !widget.isConnecting)
+            IconButton(
+              icon: const Icon(Icons.refresh_rounded, size: 20),
+              color: FonexColors.accent,
+              onPressed: widget.onManualConnect,
+              tooltip: 'Retry connection',
+            ),
+          if (widget.isConnecting)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: FonexColors.orange,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProgressCard() {
+    final urgentColor = widget.daysRemaining <= 7
+        ? FonexColors.red
+        : widget.daysRemaining <= 14
+            ? FonexColors.orange
+            : FonexColors.accent;
+
+    return GlassCard(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.schedule_rounded, color: urgentColor, size: 20),
+              const SizedBox(width: 10),
+              Text(
+                'Verification Countdown',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: FonexColors.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: urgentColor.withValues(alpha: 0.12),
+                ),
+                child: Text(
+                  '${widget.daysRemaining} days',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: urgentColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: (widget.daysRemaining / _lockAfterDays).clamp(0.0, 1.0),
+              minHeight: 8,
+              backgroundColor: FonexColors.cardBorder,
+              valueColor: AlwaysStoppedAnimation<Color>(urgentColor),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Last verified',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  color: FonexColors.textMuted,
+                ),
+              ),
+              Text(
+                'Locks in ${widget.daysRemaining} days',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  color: FonexColors.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMiniCard({
+    required IconData icon,
+    required Color color,
+    required String label,
+  }) {
+    return GlassCard(
+      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
+      borderRadius: 16,
+      child: Column(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color.withValues(alpha: 0.12),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: FonexColors.textSecondary,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: AnimatedGradientBg(
+        child: Stack(
+          children: [
+            const FloatingParticles(count: 20),
+            SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header
+                    Row(
+                      children: [
+                        const FonexLogo(size: 48),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ShaderMask(
+                                shaderCallback: (b) => const LinearGradient(
+                                  colors: [FonexColors.accentLight, FonexColors.purple],
+                                ).createShader(b),
+                                child: Text(
+                                  'FONEX',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white,
+                                    letterSpacing: 4,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                'Device Control System',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  color: FonexColors.textSecondary,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.info_outline_rounded, color: FonexColors.textSecondary),
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => DeviceInfoScreen()),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.settings_rounded, color: FonexColors.textSecondary),
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => SettingsScreen()),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    _buildHeroStatus(),
+                    const SizedBox(height: 16),
+                    _buildServerConnectionCard(),
+                    const SizedBox(height: 16),
+                    _buildProgressCard(),
+                    const SizedBox(height: 24),
+                    // Feature cards
+                    Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => PaymentScheduleScreen(daysRemaining: widget.daysRemaining)),
+                            ),
+                            child: _buildMiniCard(
+                              icon: Icons.calendar_today_rounded,
+                              color: FonexColors.purple,
+                              label: 'Payment\nSchedule',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => DeviceInfoScreen()),
+                            ),
+                            child: _buildMiniCard(
+                              icon: Icons.phone_android_rounded,
+                              color: FonexColors.cyan,
+                              label: 'Device\nInfo',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildMiniCard(
+                            icon: Icons.payment_rounded,
+                            color: widget.isDeviceOwner ? FonexColors.green : FonexColors.orange,
+                            label: widget.isDeviceOwner ? 'EMI\nActive' : 'Setup\nRequired',
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    // QR Code Card
+                    GestureDetector(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => QRCodeScreen()),
+                      ),
+                      child: GlassCard(
+                        padding: const EdgeInsets.all(20),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 50,
+                              height: 50,
+                              decoration: BoxDecoration(
+                                color: FonexColors.accent.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(Icons.qr_code_rounded, color: FonexColors.accent, size: 28),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Device QR Code',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                      color: FonexColors.textPrimary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Show QR code for easy identification',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      color: FonexColors.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.chevron_right_rounded, color: FonexColors.textMuted),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1093,7 +1952,17 @@ class _SplashScreenState extends State<SplashScreen>
 // =============================================================================
 class LockScreen extends StatefulWidget {
   final VoidCallback onUnlocked;
-  const LockScreen({super.key, required this.onUnlocked});
+  final String storeName;
+  final String supportPhone1;
+  final String supportPhone2;
+  
+  const LockScreen({
+    super.key,
+    required this.onUnlocked,
+    required this.storeName,
+    required this.supportPhone1,
+    required this.supportPhone2,
+  });
 
   @override
   State<LockScreen> createState() => _LockScreenState();
@@ -1290,7 +2159,7 @@ class _LockScreenState extends State<LockScreen>
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Powered by Roy Communication',
+                              'Powered by ${widget.storeName}',
                               style: GoogleFonts.inter(
                                 fontSize: 12,
                                 color: FonexColors.textSecondary,
@@ -1376,7 +2245,7 @@ class _LockScreenState extends State<LockScreen>
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Roy Communication',
+                                        widget.storeName,
                                         style: GoogleFonts.inter(
                                           fontSize: 14,
                                           fontWeight: FontWeight.w700,
@@ -1439,7 +2308,7 @@ class _LockScreenState extends State<LockScreen>
                                           color: FonexColors.green, size: 16),
                                       const SizedBox(width: 8),
                                       Text(
-                                        'Need Help? Call Roy Communication',
+                                        'Need Help? Call ${widget.storeName}',
                                         style: GoogleFonts.inter(
                                           fontSize: 12,
                                           fontWeight: FontWeight.w600,
@@ -1451,10 +2320,53 @@ class _LockScreenState extends State<LockScreen>
                                   const SizedBox(height: 12),
                                   Row(
                                     children: [
-                                      Expanded(child: _CallButton(number: _supportPhone1, label: '+91 83888 55549')),
+                                      Expanded(
+                                        child: _CallButton(
+                                          number: widget.supportPhone1,
+                                          label: widget.supportPhone1.replaceAll('+91', '+91 '),
+                                        ),
+                                      ),
                                       const SizedBox(width: 10),
-                                      Expanded(child: _CallButton(number: _supportPhone2, label: '+91 96352 52455')),
+                                      Expanded(
+                                        child: _CallButton(
+                                          number: widget.supportPhone2,
+                                          label: widget.supportPhone2.replaceAll('+91', '+91 '),
+                                        ),
+                                      ),
                                     ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: FonexColors.orange.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: FonexColors.orange.withValues(alpha: 0.3),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        const Icon(
+                                          Icons.info_outline_rounded,
+                                          color: FonexColors.orange,
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Flexible(
+                                          child: Text(
+                                            'Visit ${widget.storeName} store to complete EMI payment and unlock device',
+                                            textAlign: TextAlign.center,
+                                            style: GoogleFonts.inter(
+                                              fontSize: 11,
+                                              color: FonexColors.orange,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ],
                               ),
@@ -2039,196 +2951,728 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
 }
 
 // =============================================================================
-// NORMAL MODE SCREEN — Dashboard when device is NOT locked
+// DEVICE INFO SCREEN — Detailed device information
 // =============================================================================
-class NormalModeScreen extends StatelessWidget {
-  final bool isDeviceOwner;
-  final int daysRemaining;
-  final VoidCallback onSimulateExpiry;
+class DeviceInfoScreen extends StatefulWidget {
+  const DeviceInfoScreen({super.key});
 
-  const NormalModeScreen({
-    super.key,
-    required this.isDeviceOwner,
-    required this.daysRemaining,
-    required this.onSimulateExpiry,
-  });
+  @override
+  State<DeviceInfoScreen> createState() => _DeviceInfoScreenState();
+}
 
-  double get _progressPercent => daysRemaining / _lockAfterDays;
+class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
+  static const _channel = MethodChannel(_channelName);
+  Map<String, dynamic>? _deviceInfo;
+  String _deviceHash = '------';
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDeviceInfo();
+  }
+
+  Future<void> _loadDeviceInfo() async {
+    try {
+      final hash = await DeviceHashUtil.getDeviceHash();
+      final info = await _channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+      if (mounted) {
+        setState(() {
+          _deviceHash = hash;
+          _deviceInfo = info;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading device info: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: Text('Device Information', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        backgroundColor: FonexColors.surface,
+        elevation: 0,
+      ),
       body: AnimatedGradientBg(
-        child: Stack(
-          children: [
-            const FloatingParticles(count: 15),
-            SafeArea(
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(height: 8),
-
-                    // Header
-                    Row(
-                      children: [
-                        const FonexLogo(size: 42),
-                        const SizedBox(width: 14),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            ShaderMask(
-                              shaderCallback: (b) => const LinearGradient(
-                                colors: [
-                                  FonexColors.accentLight,
-                                  FonexColors.purple
-                                ],
-                              ).createShader(b),
-                              child: Text(
-                                'FONEX',
-                                style: GoogleFonts.inter(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.w900,
-                                  color: Colors.white,
-                                  letterSpacing: 4,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              'Powered by Roy Communication',
-                              style: GoogleFonts.inter(
-                                fontSize: 11,
-                                color: FonexColors.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 28),
-
-                    // Status hero card
-                    _buildHeroStatus(),
-
-                    const SizedBox(height: 16),
-
-                    // Progress card
-                    _buildProgressCard(),
-
-                    const SizedBox(height: 16),
-
-                    // Info cards
-                    Row(
-                      children: [
-                        Expanded(child: _buildMiniCard(
-                          icon: isDeviceOwner
-                              ? Icons.verified_rounded
-                              : Icons.gpp_bad_rounded,
-                          color: isDeviceOwner
-                              ? FonexColors.green
-                              : FonexColors.orange,
-                          label: isDeviceOwner ? 'Owner\nActive' : 'Owner\nInactive',
-                        )),
-                        const SizedBox(width: 12),
-                        Expanded(child: _buildMiniCard(
-                          icon: Icons.shield_rounded,
-                          color: FonexColors.cyan,
-                          label: 'Protected\nDevice',
-                        )),
-                        const SizedBox(width: 12),
-                        Expanded(child: _buildMiniCard(
-                          icon: Icons.wifi_off_rounded,
-                          color: FonexColors.purple,
-                          label: 'Works\nOffline',
-                        )),
-                      ],
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // Device info card
                     GlassCard(
-                      padding: const EdgeInsets.all(18),
-                      child: Row(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
                         children: [
-                          GlowIcon(
-                            icon: Icons.phone_android_rounded,
-                            color: FonexColors.accentLight,
-                            size: 22,
-                            containerSize: 44,
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Device Protection',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                    color: FonexColors.textPrimary,
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  'Managed by FONEX • Roy Communication',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 12,
-                                    color: FonexColors.textSecondary,
-                                  ),
-                                ),
-                              ],
+                          const FonexLogo(size: 64),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Device ID',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              color: FonexColors.textSecondary,
                             ),
                           ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              color: FonexColors.green.withValues(alpha: 0.12),
-                            ),
-                            child: Text(
-                              'ACTIVE',
-                              style: GoogleFonts.inter(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                                color: FonexColors.green,
-                                letterSpacing: 1,
-                              ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _deviceHash,
+                            style: GoogleFonts.inter(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                              color: FonexColors.textPrimary,
+                              letterSpacing: 4,
                             ),
                           ),
                         ],
                       ),
                     ),
-
-                    const Spacer(),
-
-                    // Dev tools (long press)
-                    Center(
-                      child: GestureDetector(
-                        onLongPress: () => _showDevTools(context),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Text(
-                            'FONEX v1.0.0 • Device Control System',
+                    const SizedBox(height: 20),
+                    _buildInfoRow('IMEI', _deviceInfo?['imei']?.toString() ?? 'Not Available'),
+                    _buildInfoRow('Model', _deviceInfo?['deviceModel']?.toString() ?? 'Unknown'),
+                    _buildInfoRow('Manufacturer', _deviceInfo?['manufacturer']?.toString() ?? 'Unknown'),
+                    _buildInfoRow('Android Version', 'Android ${_deviceInfo?['androidVersion'] ?? 'Unknown'}'),
+                    _buildInfoRow('Device Owner', _deviceInfo?['isDeviceOwner'] == true ? 'Active' : 'Not Active', 
+                        _deviceInfo?['isDeviceOwner'] == true ? FonexColors.green : FonexColors.red),
+                    _buildInfoRow('Lock Status', _deviceInfo?['isDeviceLocked'] == true ? 'Locked' : 'Unlocked',
+                        _deviceInfo?['isDeviceLocked'] == true ? FonexColors.red : FonexColors.green),
+                    const SizedBox(height: 20),
+                    GlassCard(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.info_outline_rounded, color: FonexColors.accent, size: 20),
+                              const SizedBox(width: 10),
+                              Text(
+                                'About This Device',
+                                style: GoogleFonts.inter(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: FonexColors.textPrimary,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'This device is protected by FONEX Device Control System. '
+                            'Device Owner status is required for full functionality.',
                             style: GoogleFonts.inter(
-                              fontSize: 11,
-                              color:
-                                  FonexColors.textMuted.withValues(alpha: 0.4),
+                              fontSize: 13,
+                              color: FonexColors.textSecondary,
+                              height: 1.5,
                             ),
                           ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value, [Color? valueColor]) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: GlassCard(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                color: FonexColors.textSecondary,
+              ),
+            ),
+            Text(
+              value,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: valueColor ?? FonexColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// SETTINGS SCREEN — App settings and preferences
+// =============================================================================
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Settings', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        backgroundColor: FonexColors.surface,
+        elevation: 0,
+      ),
+      body: AnimatedGradientBg(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildSettingsSection('App Information', [
+                _buildSettingTile(
+                  icon: Icons.info_outline_rounded,
+                  title: 'About FONEX',
+                  subtitle: 'Version ${FonexConfig.appVersion}',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AboutScreen()),
+                  ),
+                ),
+                _buildSettingTile(
+                  icon: Icons.store_rounded,
+                  title: 'Store Information',
+                  subtitle: _storeName,
+                ),
+              ]),
+              const SizedBox(height: 24),
+              _buildSettingsSection('Support', [
+                _buildSettingTile(
+                  icon: Icons.phone_rounded,
+                  title: 'Contact Store',
+                  subtitle: _supportPhone1,
+                  onTap: () => launchUrl(Uri.parse('tel:$_supportPhone1')),
+                ),
+                _buildSettingTile(
+                  icon: Icons.help_outline_rounded,
+                  title: 'Help & Support',
+                  subtitle: 'Get help with your device',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AboutScreen()),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 24),
+              _buildSettingsSection('System', [
+                _buildSettingTile(
+                  icon: Icons.refresh_rounded,
+                  title: 'Sync with Server',
+                  subtitle: 'Manually sync device status',
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Syncing with server...')),
+                    );
+                  },
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingsSection(String title, List<Widget> children) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 12),
+          child: Text(
+            title,
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: FonexColors.textMuted,
+              letterSpacing: 1,
+            ),
+          ),
+        ),
+        ...children,
+      ],
+    );
+  }
+
+  Widget _buildSettingTile({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    VoidCallback? onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: GlassCard(
+        padding: EdgeInsets.zero,
+        child: ListTile(
+          leading: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: FonexColors.accent.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: FonexColors.accent, size: 20),
+          ),
+          title: Text(
+            title,
+            style: GoogleFonts.inter(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: FonexColors.textPrimary,
+            ),
+          ),
+          subtitle: subtitle != null
+              ? Text(
+                  subtitle,
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: FonexColors.textSecondary,
+                  ),
+                )
+              : null,
+          trailing: onTap != null
+              ? const Icon(Icons.chevron_right_rounded, color: FonexColors.textMuted)
+              : null,
+          onTap: onTap,
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// ABOUT SCREEN — App information and help
+// =============================================================================
+class AboutScreen extends StatelessWidget {
+  const AboutScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('About', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        backgroundColor: FonexColors.surface,
+        elevation: 0,
+      ),
+      body: AnimatedGradientBg(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              const FonexLogo(size: 80),
+              const SizedBox(height: 24),
+              Text(
+                'FONEX',
+                style: GoogleFonts.inter(
+                  fontSize: 32,
+                  fontWeight: FontWeight.w900,
+                  color: FonexColors.textPrimary,
+                  letterSpacing: 4,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Device Control System',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  color: FonexColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Version ${FonexConfig.appVersion}',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  color: FonexColors.textMuted,
+                ),
+              ),
+              const SizedBox(height: 40),
+              GlassCard(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Powered by',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: FonexColors.textMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _storeName,
+                      style: GoogleFonts.inter(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: FonexColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _buildContactRow(Icons.phone_rounded, _supportPhone1),
+                    const SizedBox(height: 12),
+                    _buildContactRow(Icons.phone_rounded, _supportPhone2),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              GlassCard(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Help & Support',
+                      style: GoogleFonts.inter(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: FonexColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'If you need help with your device or have questions about your EMI payment, please contact ${_storeName} using the phone numbers above.',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        color: FonexColors.textSecondary,
+                        height: 1.6,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContactRow(IconData icon, String text) {
+    return Row(
+      children: [
+        Icon(icon, color: FonexColors.accent, size: 20),
+        const SizedBox(width: 12),
+        Text(
+          text,
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            color: FonexColors.textPrimary,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// =============================================================================
+// PAYMENT SCHEDULE SCREEN — EMI payment schedule and history
+// =============================================================================
+class PaymentScheduleScreen extends StatelessWidget {
+  final int daysRemaining;
+  
+  const PaymentScheduleScreen({super.key, required this.daysRemaining});
+
+  @override
+  Widget build(BuildContext context) {
+    final nextPaymentDate = DateTime.now().add(Duration(days: daysRemaining));
+    final urgentColor = daysRemaining <= 7
+        ? FonexColors.red
+        : daysRemaining <= 14
+            ? FonexColors.orange
+            : FonexColors.green;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Payment Schedule', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        backgroundColor: FonexColors.surface,
+        elevation: 0,
+      ),
+      body: AnimatedGradientBg(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GlassCard(
+                padding: const EdgeInsets.all(24),
+                borderColor: urgentColor.withValues(alpha: 0.3),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.calendar_today_rounded,
+                      color: urgentColor,
+                      size: 48,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Next Payment Due',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        color: FonexColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _formatDate(nextPaymentDate),
+                      style: GoogleFonts.inter(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        color: urgentColor,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '$daysRemaining days remaining',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        color: FonexColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Payment Information',
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: FonexColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              GlassCard(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    _buildInfoRow('Store', _storeName),
+                    const Divider(color: FonexColors.cardBorder),
+                    _buildInfoRow('Contact', _supportPhone1),
+                    const Divider(color: FonexColors.cardBorder),
+                    _buildInfoRow('Payment Period', '${_lockAfterDays} days'),
+                    const Divider(color: FonexColors.cardBorder),
+                    _buildInfoRow('Status', daysRemaining > 0 ? 'Active' : 'Locked',
+                        daysRemaining > 0 ? FonexColors.green : FonexColors.red),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              GlassCard(
+                padding: const EdgeInsets.all(20),
+                borderColor: FonexColors.orange.withValues(alpha: 0.3),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: FonexColors.orange),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Please visit ${_storeName} to make your EMI payment before the due date to avoid device lock.',
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          color: FonexColors.textPrimary,
+                          height: 1.5,
                         ),
                       ),
                     ),
                   ],
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value, [Color? valueColor]) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              color: FonexColors.textSecondary,
             ),
-          ],
+          ),
+          Text(
+            value,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: valueColor ?? FonexColors.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
+  }
+}
+
+// =============================================================================
+// QR CODE SCREEN — Display device QR code for identification
+// =============================================================================
+class QRCodeScreen extends StatefulWidget {
+  const QRCodeScreen({super.key});
+
+  @override
+  State<QRCodeScreen> createState() => _QRCodeScreenState();
+}
+
+class _QRCodeScreenState extends State<QRCodeScreen> {
+  String _deviceHash = '------';
+  String _deviceInfo = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDeviceData();
+  }
+
+  Future<void> _loadDeviceData() async {
+    try {
+      final hash = await DeviceHashUtil.getDeviceHash();
+      final channel = const MethodChannel(_channelName);
+      final info = await channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+      final imei = info?['imei']?.toString() ?? 'N/A';
+      
+      if (mounted) {
+        setState(() {
+          _deviceHash = hash;
+          _deviceInfo = 'IMEI: $imei\nHash: $hash';
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading device data: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Device QR Code', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        backgroundColor: FonexColors.surface,
+        elevation: 0,
+      ),
+      body: AnimatedGradientBg(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                GlassCard(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    children: [
+                      // Simple QR representation (text-based)
+                      Container(
+                        width: 200,
+                        height: 200,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: FonexColors.cardBorder, width: 2),
+                        ),
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.qr_code_2_rounded, size: 120, color: Colors.black),
+                              const SizedBox(height: 8),
+                              Text(
+                                _deviceHash,
+                                style: GoogleFonts.inter(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.black,
+                                  letterSpacing: 2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Device ID',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          color: FonexColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _deviceHash,
+                        style: GoogleFonts.inter(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          color: FonexColors.textPrimary,
+                          letterSpacing: 4,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: FonexColors.card.withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          _deviceInfo,
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            color: FonexColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+                GlassCard(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline_rounded, color: FonexColors.accent, size: 20),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Show this QR code or Device ID to ${_storeName} for device identification and support.',
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            color: FonexColors.textSecondary,
+                            height: 1.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
