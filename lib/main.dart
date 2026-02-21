@@ -621,19 +621,31 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         }
       } catch (_) {}
 
-      final response = await http.post(
-        Uri.parse('$_serverBaseUrl/checkin'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      try {
+        debugPrint('Sending check-in payload: ${jsonEncode({
           'device_hash': deviceHash,
           'imei': imei,
           'is_locked': _isDeviceLocked,
           'days_remaining': _daysRemaining,
           'metadata': metadata,
-        }),
-      ).timeout(const Duration(seconds: 10));
+        })}');
 
-      if (response.statusCode == 200) {
+        final response = await http.post(
+          Uri.parse('$_serverBaseUrl/checkin'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'device_hash': deviceHash,
+            'imei': imei,
+            'is_locked': _isDeviceLocked,
+            'days_remaining': _daysRemaining,
+            'metadata': metadata,
+          }),
+        ).timeout(const Duration(seconds: 10));
+
+        debugPrint('Server check-in HTTP status: ${response.statusCode}');
+        debugPrint('Server check-in HTTP body: ${response.body}');
+
+        if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final rawAction = data['action'] as String? ?? 'none';
         final action = rawAction.toLowerCase();
@@ -665,15 +677,18 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             await _disengageDeviceLock();
             try {
               await _channel.invokeMethod('clearDeviceOwner');
-            } catch (_) {}
+            } on PlatformException catch (e) {
+              debugPrint('Error clearing device owner: $e');
+            }
             break;
           default:
             break;
         }
+      } else {
+        debugPrint('Failed to check in. Server returned status: ${response.statusCode}');
       }
-    } catch (e) {
-      // Offline or server error — ignore, local logic handles everything
-      debugPrint('Server check-in skipped (offline or error): $e');
+    } catch (e, stacktrace) {
+      debugPrint('Fatal error during _serverCheckIn: $e\n$stacktrace');
     }
   }
 
@@ -703,8 +718,278 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       onSimulateExpiry: _devSimulateExpiry,
     );
   }
-}
 
+  Widget _buildHeroStatus() {
+    final isHealthy = _isDeviceOwner && _daysRemaining > 0;
+    return GlassCard(
+      padding: const EdgeInsets.all(24),
+      borderColor: isHealthy
+          ? FonexColors.green.withValues(alpha: 0.3)
+          : FonexColors.red.withValues(alpha: 0.3),
+      child: Row(
+        children: [
+          GlowIcon(
+            icon: isHealthy ? Icons.check_circle_rounded : Icons.error_rounded,
+            color: isHealthy ? FonexColors.green : FonexColors.red,
+            size: 30,
+            containerSize: 60,
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isHealthy ? 'All Systems Operational' : 'Action Required',
+                  style: GoogleFonts.inter(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: FonexColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  isHealthy
+                      ? 'Device is fully protected and verified'
+                      : 'Device protection needs configuration',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: FonexColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProgressCard() {
+    final urgentColor = _daysRemaining <= 7
+        ? FonexColors.red
+        : _daysRemaining <= 14
+            ? FonexColors.orange
+            : FonexColors.accent;
+
+    return GlassCard(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.schedule_rounded, color: urgentColor, size: 20),
+              const SizedBox(width: 10),
+              Text(
+                'Verification Countdown',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: FonexColors.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: urgentColor.withValues(alpha: 0.12),
+                ),
+                child: Text(
+                  '$_daysRemaining days',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: urgentColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Progress bar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: (_daysRemaining / _lockAfterDays).clamp(0.0, 1.0),
+              minHeight: 8,
+              backgroundColor: FonexColors.cardBorder,
+              valueColor: AlwaysStoppedAnimation<Color>(urgentColor),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Last verified',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  color: FonexColors.textMuted,
+                ),
+              ),
+              Text(
+                'Locks in $_daysRemaining days',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  color: FonexColors.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMiniCard({
+    required IconData icon,
+    required Color color,
+    required String label,
+  }) {
+    return GlassCard(
+      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
+      borderRadius: 16,
+      child: Column(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color.withValues(alpha: 0.12),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: FonexColors.textSecondary,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDevTools(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: FonexColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(2),
+                color: FonexColors.cardBorder,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Developer Tools',
+              style: GoogleFonts.inter(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: FonexColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'For testing and development only',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                color: FonexColors.textMuted,
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _devSimulateExpiry();
+                },
+                icon: const Icon(Icons.fast_forward_rounded, size: 20),
+                label: Text(
+                  'Simulate 30-Day Expiry',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: FonexColors.accent,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  final prefs = await SharedPreferences.getInstance();
+                  final now = DateTime.now();
+                  await prefs.setInt(_keySimAbsentSince, now.subtract(const Duration(days: 7)).millisecondsSinceEpoch);
+                  await _checkSimState(); // trigger immediate recalculation
+                },
+                icon: const Icon(Icons.sim_card_alert_rounded, size: 20),
+                label: Text(
+                  'Simulate SIM Absent Lock',
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: FonexColors.surface,
+                  foregroundColor: FonexColors.red,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(
+                        color: FonexColors.red.withValues(alpha: 0.3)),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  
+  Widget build(BuildContext context) {
+    if (_isLoading) return const SplashScreen();
+
+    if (_isDeviceLocked) {
+      return LockScreen(onUnlocked: _disengageDeviceLock);
+    }
+
+    return NormalModeScreen(
+      isDeviceOwner: _isDeviceOwner,
+      daysRemaining: _daysRemaining,
+      onSimulateExpiry: _devSimulateExpiry,
+    );
+  }
+}
 
 // =============================================================================
 // SPLASH SCREEN — Premium animated loading
@@ -1749,7 +2034,6 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
             ],
           ),
         ),
-      ),
     );
   }
 }
@@ -1944,237 +2228,6 @@ class NormalModeScreen extends StatelessWidget {
                 ),
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeroStatus() {
-    final isHealthy = isDeviceOwner && daysRemaining > 0;
-    return GlassCard(
-      padding: const EdgeInsets.all(24),
-      borderColor: isHealthy
-          ? FonexColors.green.withValues(alpha: 0.3)
-          : FonexColors.red.withValues(alpha: 0.3),
-      child: Row(
-        children: [
-          GlowIcon(
-            icon: isHealthy ? Icons.check_circle_rounded : Icons.error_rounded,
-            color: isHealthy ? FonexColors.green : FonexColors.red,
-            size: 30,
-            containerSize: 60,
-          ),
-          const SizedBox(width: 20),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isHealthy ? 'All Systems Operational' : 'Action Required',
-                  style: GoogleFonts.inter(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: FonexColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  isHealthy
-                      ? 'Device is fully protected and verified'
-                      : 'Device protection needs configuration',
-                  style: GoogleFonts.inter(
-                    fontSize: 13,
-                    color: FonexColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProgressCard() {
-    final urgentColor = daysRemaining <= 7
-        ? FonexColors.red
-        : daysRemaining <= 14
-            ? FonexColors.orange
-            : FonexColors.accent;
-
-    return GlassCard(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.schedule_rounded, color: urgentColor, size: 20),
-              const SizedBox(width: 10),
-              Text(
-                'Verification Countdown',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: FonexColors.textPrimary,
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: urgentColor.withValues(alpha: 0.12),
-                ),
-                child: Text(
-                  '$daysRemaining days',
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: urgentColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Progress bar
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: _progressPercent,
-              minHeight: 8,
-              backgroundColor: FonexColors.cardBorder,
-              valueColor: AlwaysStoppedAnimation<Color>(urgentColor),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Last verified',
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  color: FonexColors.textMuted,
-                ),
-              ),
-              Text(
-                'Locks in $daysRemaining days',
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  color: FonexColors.textMuted,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMiniCard({
-    required IconData icon,
-    required Color color,
-    required String label,
-  }) {
-    return GlassCard(
-      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
-      borderRadius: 16,
-      child: Column(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: color.withValues(alpha: 0.12),
-            ),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: GoogleFonts.inter(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: FonexColors.textSecondary,
-              height: 1.3,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showDevTools(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.all(24),
-        decoration: const BoxDecoration(
-          color: FonexColors.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(2),
-                color: FonexColors.cardBorder,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Developer Tools',
-              style: GoogleFonts.inter(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: FonexColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'For testing and development only',
-              style: GoogleFonts.inter(
-                fontSize: 12,
-                color: FonexColors.textMuted,
-              ),
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  onSimulateExpiry();
-                },
-                icon: const Icon(Icons.fast_forward_rounded, size: 20),
-                label: Text(
-                  'Simulate 30-Day Expiry',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: FonexColors.red.withValues(alpha: 0.15),
-                  foregroundColor: FonexColors.red,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    side: BorderSide(
-                        color: FonexColors.red.withValues(alpha: 0.3)),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
           ],
         ),
       ),
