@@ -2920,6 +2920,7 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
             ],
           ),
         ),
+      ),
     );
   }
 }
@@ -3231,6 +3232,18 @@ class SettingsScreen extends StatelessWidget {
 // =============================================================================
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
+  
+  // Facebook profile photo URL
+  // Option 1: Get direct image URL - Visit https://www.facebook.com/share/1JNRaFRMqc/
+  //          Right-click profile photo > Copy image address, then paste below
+  // Option 2: Use Facebook Graph API (requires username): 
+  //          https://graph.facebook.com/{username}/picture?type=large
+  // Option 3: Leave empty to show initials placeholder
+  static const String _facebookProfilePhotoUrl = '';
+  
+  // Alternative: Try to construct from share link (update if needed)
+  // For share link: https://www.facebook.com/share/1JNRaFRMqc/
+  // You can also use: https://graph.facebook.com/v18.0/{user-id}/picture?type=large
 
   @override
   Widget build(BuildContext context) {
@@ -3327,6 +3340,187 @@ class AboutScreen extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(height: 24),
+              // Developer Attribution
+              GlassCard(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Developed by',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: FonexColors.textMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    InkWell(
+                      onTap: () async {
+                        final uri = Uri.parse('https://www.facebook.com/share/1JNRaFRMqc/');
+                        if (await canLaunchUrl(uri)) {
+                          await launchUrl(uri, mode: LaunchMode.externalApplication);
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: FonexColors.cardBorder,
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            // Profile Photo Preview - Facebook style
+                            // Loading profile photo from Facebook
+                            Container(
+                              width: 64,
+                              height: 64,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: FonexColors.accent.withValues(alpha: 0.3),
+                                  width: 2,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: FonexColors.accent.withValues(alpha: 0.2),
+                                    blurRadius: 8,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
+                              ),
+                              child: ClipOval(
+                                child: _facebookProfilePhotoUrl.isNotEmpty
+                                    ? Image.network(
+                                        _facebookProfilePhotoUrl,
+                                        width: 64,
+                                        height: 64,
+                                        fit: BoxFit.cover,
+                                        headers: const {
+                                          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                                        },
+                                        loadingBuilder: (context, child, loadingProgress) {
+                                          if (loadingProgress == null) return child;
+                                          return Container(
+                                            width: 64,
+                                            height: 64,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: FonexColors.card,
+                                            ),
+                                            child: Center(
+                                              child: SizedBox(
+                                                width: 24,
+                                                height: 24,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2.5,
+                                                  value: loadingProgress.expectedTotalBytes != null
+                                                      ? loadingProgress.cumulativeBytesLoaded /
+                                                          loadingProgress.expectedTotalBytes!
+                                                      : null,
+                                                  color: FonexColors.accent,
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        errorBuilder: (_, __, ___) => _buildProfilePlaceholder(),
+                                      )
+                                    : _buildProfilePlaceholder(),
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Anupam Pradhan',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w700,
+                                      color: FonexColors.textPrimary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: FonexColors.accent.withValues(alpha: 0.15),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.facebook_rounded,
+                                              color: FonexColors.accent,
+                                              size: 16,
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              'View Profile',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                                color: FonexColors.accent,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              color: FonexColors.textMuted,
+                              size: 16,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      height: 1,
+                      color: FonexColors.cardBorder,
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.code_rounded,
+                          color: FonexColors.textMuted,
+                          size: 16,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'This app and system was designed and developed by Anupam Pradhan',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: FonexColors.textMuted,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -3347,6 +3541,34 @@ class AboutScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildProfilePlaceholder() {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            FonexColors.accent,
+            FonexColors.purple,
+          ],
+        ),
+      ),
+      child: Center(
+        child: Text(
+          'AP',
+          style: GoogleFonts.inter(
+            fontSize: 24,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+          ),
+        ),
+      ),
     );
   }
 }

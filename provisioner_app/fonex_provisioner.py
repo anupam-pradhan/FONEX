@@ -169,15 +169,15 @@ class FonexProvisioner(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.title("FONEX — Device Provisioner")
-        self.geometry("760x620")
-        self.minsize(700, 560)
+        self.geometry("900x720")
+        self.minsize(800, 650)
         self.resizable(True, True)
         self.configure(fg_color=BG)
 
         # Center window
         self.update_idletasks()
-        x = (self.winfo_screenwidth()  - 760) // 2
-        y = (self.winfo_screenheight() - 620) // 2
+        x = (self.winfo_screenwidth()  - 900) // 2
+        y = (self.winfo_screenheight() - 720) // 2
         self.geometry(f"+{x}+{y}")
 
         # State
@@ -194,24 +194,24 @@ class FonexProvisioner(ctk.CTk):
     # ─── UI Shell ────────────────────────────────────────────────────────────
     def _build_ui(self):
         # ── Top Banner ──────────────────────────────────────────────────────
-        banner = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=0, height=72)
+        banner = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=0, height=88)
         banner.pack(fill="x")
         banner.pack_propagate(False)
 
         # Logo image or fallback letter badge
-        logo_container = ctk.CTkFrame(banner, fg_color="transparent", width=56, height=56)
-        logo_container.place(x=16, rely=0.5, anchor="w")
+        logo_container = ctk.CTkFrame(banner, fg_color="transparent", width=64, height=64)
+        logo_container.place(x=24, rely=0.5, anchor="w")
         logo_container.pack_propagate(False)
 
         logo_placed = False
         logo_path = get_logo_path()
         if PIL_AVAILABLE and logo_path:
             try:
-                img = Image.open(logo_path).resize((52, 52), Image.LANCZOS)
-                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(52, 52))
+                img = Image.open(logo_path).resize((60, 60), Image.LANCZOS)
+                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(60, 60))
                 self._logo_image = ctk_img
                 lbl = ctk.CTkLabel(logo_container, image=ctk_img, text="",
-                                   width=52, height=52, corner_radius=26)
+                                   width=60, height=60, corner_radius=30)
                 lbl.pack()
                 logo_placed = True
             except Exception:
@@ -220,40 +220,40 @@ class FonexProvisioner(ctk.CTk):
         if not logo_placed:
             fallback = ctk.CTkLabel(
                 logo_container, text="F",
-                font=ctk.CTkFont("Arial", 26, "bold"),
+                font=ctk.CTkFont("Arial", 32, "bold"),
                 text_color=TEXT,
-                fg_color=ACCENT, corner_radius=26,
-                width=52, height=52,
+                fg_color=ACCENT, corner_radius=30,
+                width=60, height=60,
             )
             fallback.pack()
 
         # Title
         title_frame = ctk.CTkFrame(banner, fg_color="transparent")
-        title_frame.place(x=82, rely=0.5, anchor="w")
+        title_frame.place(x=100, rely=0.5, anchor="w")
 
         ctk.CTkLabel(
             title_frame,
             text="FONEX  Device Provisioner",
-            font=ctk.CTkFont("Arial", 20, "bold"),
+            font=ctk.CTkFont("Arial", 24, "bold"),
             text_color=TEXT,
         ).pack(anchor="w")
 
         ctk.CTkLabel(
             title_frame,
             text="Powered by Roy Communication",
-            font=ctk.CTkFont("Arial", 11),
+            font=ctk.CTkFont("Arial", 12),
             text_color=TEXT_SEC,
-        ).pack(anchor="w")
+        ).pack(anchor="w", pady=(2, 0))
 
         # Right side version badge
-        badge = ctk.CTkFrame(banner, fg_color=ACCENT_DK, corner_radius=8, width=64, height=28)
-        badge.place(relx=1.0, x=-16, rely=0.5, anchor="e")
+        badge = ctk.CTkFrame(banner, fg_color=ACCENT_DK, corner_radius=10, width=72, height=32)
+        badge.place(relx=1.0, x=-24, rely=0.5, anchor="e")
         ctk.CTkLabel(badge, text="v2.0",
-                     font=ctk.CTkFont("Arial", 11, "bold"),
+                     font=ctk.CTkFont("Arial", 12, "bold"),
                      text_color=TEXT).place(relx=0.5, rely=0.5, anchor="center")
 
         # ── Step Indicator Bar ───────────────────────────────────────────────
-        self.step_bar_frame = ctk.CTkFrame(self, fg_color=CARD, corner_radius=0, height=58)
+        self.step_bar_frame = ctk.CTkFrame(self, fg_color=CARD, corner_radius=0, height=70)
         self.step_bar_frame.pack(fill="x")
         self.step_bar_frame.pack_propagate(False)
 
@@ -272,20 +272,20 @@ class FonexProvisioner(ctk.CTk):
 
             num = ctk.CTkLabel(
                 col, text=num_text,
-                font=ctk.CTkFont("Arial", 11, "bold"),
+                font=ctk.CTkFont("Arial", 13, "bold"),
                 text_color=TEXT_MUTED,
                 fg_color="transparent",
-                width=24, height=24,
-                corner_radius=12,
+                width=32, height=32,
+                corner_radius=16,
             )
-            num.pack(pady=(8, 0))
+            num.pack(pady=(12, 4))
 
             lbl = ctk.CTkLabel(
                 col, text=name,
-                font=ctk.CTkFont("Arial", 9),
+                font=ctk.CTkFont("Arial", 10),
                 text_color=TEXT_MUTED,
             )
-            lbl.pack(pady=(1, 0))
+            lbl.pack(pady=(0, 8))
             self.step_labels.append((num, lbl))
 
         # Separator
@@ -297,7 +297,7 @@ class FonexProvisioner(ctk.CTk):
         self.content.pack(fill="both", expand=True)
 
         # ── Bottom Navigation Bar ────────────────────────────────────────────
-        self.bottom = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=0, height=72)
+        self.bottom = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=0, height=88)
         self.bottom.pack(fill="x", side="bottom")
         self.bottom.pack_propagate(False)
 
@@ -305,44 +305,44 @@ class FonexProvisioner(ctk.CTk):
         ctk.CTkLabel(
             self.bottom,
             text="© Roy Communication  •  All devices provisioned with FONEX are protected",
-            font=ctk.CTkFont("Arial", 10),
+            font=ctk.CTkFont("Arial", 11),
             text_color=TEXT_MUTED,
-        ).place(relx=0.5, y=56, anchor="center")
+        ).place(relx=0.5, y=68, anchor="center")
 
         self.btn_back = ctk.CTkButton(
             self.bottom, text="← Back",
-            width=120, height=42,
-            fg_color="transparent", border_color=BORDER, border_width=1,
+            width=140, height=48,
+            fg_color="transparent", border_color=BORDER, border_width=2,
             text_color=TEXT_SEC, hover_color=CARD,
             command=self._go_back,
-            font=ctk.CTkFont("Arial", 13),
-            corner_radius=10,
+            font=ctk.CTkFont("Arial", 14, "bold"),
+            corner_radius=12,
         )
-        self.btn_back.place(x=18, y=16)
+        self.btn_back.place(x=24, y=18)
 
         self.btn_next = ctk.CTkButton(
             self.bottom, text="Start Setup  →",
-            width=170, height=42,
+            width=200, height=48,
             fg_color=ACCENT, hover_color=ACCENT_DK,
             text_color=TEXT,
             command=self._go_next,
-            font=ctk.CTkFont("Arial", 14, "bold"),
-            corner_radius=10,
+            font=ctk.CTkFont("Arial", 15, "bold"),
+            corner_radius=12,
         )
-        self.btn_next.place(relx=1.0, x=-18, y=16, anchor="ne")
+        self.btn_next.place(relx=1.0, x=-24, y=18, anchor="ne")
 
     # ─── Step indicator sync ─────────────────────────────────────────────────
     def _update_step_bar(self, active: int):
         for i, (num, lbl) in enumerate(self.step_labels):
             if i < active:
-                num.configure(text="✓", text_color=GREEN, fg_color="#0F2E1A")
-                lbl.configure(text_color=GREEN)
+                num.configure(text="✓", text_color=GREEN, fg_color="#0F2E1A", width=32, height=32, corner_radius=16)
+                lbl.configure(text_color=GREEN, font=ctk.CTkFont("Arial", 10, "bold"))
             elif i == active:
-                num.configure(text=str(i + 1), text_color=TEXT, fg_color=ACCENT)
-                lbl.configure(text_color=ACCENT_LT)
+                num.configure(text=str(i + 1), text_color=TEXT, fg_color=ACCENT, width=32, height=32, corner_radius=16)
+                lbl.configure(text_color=ACCENT_LT, font=ctk.CTkFont("Arial", 10, "bold"))
             else:
-                num.configure(text=str(i + 1), text_color=TEXT_MUTED, fg_color="transparent")
-                lbl.configure(text_color=TEXT_MUTED)
+                num.configure(text=str(i + 1), text_color=TEXT_MUTED, fg_color="transparent", width=32, height=32, corner_radius=16)
+                lbl.configure(text_color=TEXT_MUTED, font=ctk.CTkFont("Arial", 10))
 
     # ─── Helpers ─────────────────────────────────────────────────────────────
     def _clear(self):
@@ -351,8 +351,8 @@ class FonexProvisioner(ctk.CTk):
 
     def _card(self, parent, **kwargs) -> ctk.CTkFrame:
         """Creates a styled info card."""
-        return ctk.CTkFrame(parent, fg_color=CARD, corner_radius=14,
-                            border_width=1, border_color=BORDER, **kwargs)
+        return ctk.CTkFrame(parent, fg_color=CARD, corner_radius=16,
+                            border_width=2, border_color=BORDER, **kwargs)
 
     def _go_next(self):
         self._cancel_poll()
@@ -403,19 +403,19 @@ class FonexProvisioner(ctk.CTk):
         outer.place(relx=0.5, rely=0.5, anchor="center")
 
         # Hero logo — large version
-        hero_frame = ctk.CTkFrame(outer, fg_color="transparent", width=120, height=120)
-        hero_frame.pack(pady=(0, 16))
+        hero_frame = ctk.CTkFrame(outer, fg_color="transparent", width=140, height=140)
+        hero_frame.pack(pady=(0, 20))
         hero_frame.pack_propagate(False)
 
         logo_path = get_logo_path()
         logo_placed = False
         if PIL_AVAILABLE and logo_path:
             try:
-                img = Image.open(logo_path).resize((110, 110), Image.LANCZOS)
-                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(110, 110))
+                img = Image.open(logo_path).resize((130, 130), Image.LANCZOS)
+                ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(130, 130))
                 self._logo_hero = ctk_img
                 lbl = ctk.CTkLabel(hero_frame, image=ctk_img, text="",
-                                   width=110, height=110, corner_radius=55)
+                                   width=130, height=130, corner_radius=65)
                 lbl.place(relx=0.5, rely=0.5, anchor="center")
                 logo_placed = True
             except Exception:
@@ -424,26 +424,26 @@ class FonexProvisioner(ctk.CTk):
         if not logo_placed:
             ctk.CTkLabel(
                 hero_frame, text="F",
-                font=ctk.CTkFont("Arial", 56, "bold"),
+                font=ctk.CTkFont("Arial", 64, "bold"),
                 text_color=TEXT, fg_color=ACCENT,
-                corner_radius=55, width=110, height=110,
+                corner_radius=65, width=130, height=130,
             ).place(relx=0.5, rely=0.5, anchor="center")
 
         ctk.CTkLabel(
             outer, text="FONEX Device Provisioner",
-            font=ctk.CTkFont("Arial", 28, "bold"),
+            font=ctk.CTkFont("Arial", 32, "bold"),
             text_color=TEXT,
         ).pack()
 
         ctk.CTkLabel(
             outer, text="Powered by Roy Communication",
-            font=ctk.CTkFont("Arial", 13),
+            font=ctk.CTkFont("Arial", 14),
             text_color=TEXT_SEC,
-        ).pack(pady=(2, 24))
+        ).pack(pady=(4, 28))
 
         # Info steps card
-        card = self._card(outer, width=500)
-        card.pack(fill="x", ipadx=20, ipady=12, padx=16)
+        card = self._card(outer, width=600)
+        card.pack(fill="x", ipadx=28, ipady=18, padx=20)
 
         steps_info = [
             ("🔧", "ADB Tools",       "Automatically verified — ADB is bundled"),
@@ -453,22 +453,22 @@ class FonexProvisioner(ctk.CTk):
         ]
         for emoji, title, desc in steps_info:
             row = ctk.CTkFrame(card, fg_color="transparent")
-            row.pack(fill="x", pady=6, padx=14)
-            ctk.CTkLabel(row, text=emoji, font=ctk.CTkFont("Arial", 20),
-                         width=36, text_color=TEXT).pack(side="left")
+            row.pack(fill="x", pady=10, padx=20)
+            ctk.CTkLabel(row, text=emoji, font=ctk.CTkFont("Arial", 24),
+                         width=44, text_color=TEXT).pack(side="left")
             col = ctk.CTkFrame(row, fg_color="transparent")
-            col.pack(side="left", padx=12)
-            ctk.CTkLabel(col, text=title, font=ctk.CTkFont("Arial", 13, "bold"),
+            col.pack(side="left", padx=16)
+            ctk.CTkLabel(col, text=title, font=ctk.CTkFont("Arial", 15, "bold"),
                          text_color=TEXT, anchor="w").pack(anchor="w")
-            ctk.CTkLabel(col, text=desc, font=ctk.CTkFont("Arial", 11),
+            ctk.CTkLabel(col, text=desc, font=ctk.CTkFont("Arial", 12),
                          text_color=TEXT_SEC, anchor="w").pack(anchor="w")
 
         ctk.CTkLabel(
             outer,
             text="⏱  Total time: ~2–3 minutes  •  Keep the phone connected throughout",
-            font=ctk.CTkFont("Arial", 11),
+            font=ctk.CTkFont("Arial", 12),
             text_color=TEXT_MUTED,
-        ).pack(pady=(18, 0))
+        ).pack(pady=(24, 0))
 
     # =========================================================================
     # STEP 1 — ADB Check
@@ -483,20 +483,20 @@ class FonexProvisioner(ctk.CTk):
         outer.place(relx=0.5, rely=0.5, anchor="center")
 
         ctk.CTkLabel(outer, text="🔧  Verifying ADB Tools",
-                     font=ctk.CTkFont("Arial", 24, "bold"), text_color=TEXT).pack(pady=(0, 6))
+                     font=ctk.CTkFont("Arial", 28, "bold"), text_color=TEXT).pack(pady=(0, 8))
         ctk.CTkLabel(outer, text="ADB (Android Debug Bridge) lets this app talk to the Android phone.",
-                     font=ctk.CTkFont("Arial", 12), text_color=TEXT_SEC,
-                     wraplength=480).pack()
+                     font=ctk.CTkFont("Arial", 13), text_color=TEXT_SEC,
+                     wraplength=560).pack()
 
         self._adb_status_lbl = ctk.CTkLabel(
             outer, text="🔍  Searching…",
-            font=ctk.CTkFont("Arial", 14, "bold"),
+            font=ctk.CTkFont("Arial", 16, "bold"),
             text_color=ORANGE,
         )
-        self._adb_status_lbl.pack(pady=20)
+        self._adb_status_lbl.pack(pady=24)
 
-        self._adb_card = self._card(outer, width=500)
-        self._adb_card.pack(padx=20, fill="x", ipady=12, ipadx=16)
+        self._adb_card = self._card(outer, width=600)
+        self._adb_card.pack(padx=24, fill="x", ipady=16, ipadx=20)
         self._adb_inner = ctk.CTkFrame(self._adb_card, fg_color="transparent")
         self._adb_inner.pack(fill="x", padx=14, pady=8)
 
@@ -559,10 +559,10 @@ class FonexProvisioner(ctk.CTk):
         outer.place(relx=0.5, rely=0.5, anchor="center")
 
         ctk.CTkLabel(outer, text="📱  Connect the Android Phone",
-                     font=ctk.CTkFont("Arial", 24, "bold"), text_color=TEXT).pack(pady=(0, 8))
+                     font=ctk.CTkFont("Arial", 28, "bold"), text_color=TEXT).pack(pady=(0, 12))
 
-        card = self._card(outer, width=500)
-        card.pack(fill="x", ipadx=14, ipady=10, padx=16)
+        card = self._card(outer, width=600)
+        card.pack(fill="x", ipadx=20, ipady=14, padx=20)
 
         steps_list = [
             ("1", "Connect phone to this computer with a USB cable."),
@@ -572,27 +572,27 @@ class FonexProvisioner(ctk.CTk):
         ]
         for num, txt in steps_list:
             row = ctk.CTkFrame(card, fg_color="transparent")
-            row.pack(fill="x", pady=4, padx=14)
+            row.pack(fill="x", pady=8, padx=20)
             ctk.CTkLabel(row, text=num,
-                         font=ctk.CTkFont("Arial", 11, "bold"),
-                         fg_color=ACCENT, corner_radius=10,
-                         width=22, height=22, text_color=TEXT).pack(side="left")
+                         font=ctk.CTkFont("Arial", 13, "bold"),
+                         fg_color=ACCENT, corner_radius=12,
+                         width=28, height=28, text_color=TEXT).pack(side="left")
             ctk.CTkLabel(row, text=f"   {txt}",
-                         font=ctk.CTkFont("Arial", 12), text_color=TEXT_SEC,
-                         anchor="w", justify="left", wraplength=420).pack(side="left", anchor="w")
+                         font=ctk.CTkFont("Arial", 13), text_color=TEXT_SEC,
+                         anchor="w", justify="left", wraplength=500).pack(side="left", anchor="w")
 
         self._device_status_lbl = ctk.CTkLabel(
             outer,
             text="⏳  Waiting for device…",
-            font=ctk.CTkFont("Arial", 15, "bold"),
+            font=ctk.CTkFont("Arial", 17, "bold"),
             text_color=ORANGE,
         )
-        self._device_status_lbl.pack(pady=18)
+        self._device_status_lbl.pack(pady=22)
 
         self._device_sub_lbl = ctk.CTkLabel(
             outer,
             text="Checking every 2 seconds — this will update automatically",
-            font=ctk.CTkFont("Arial", 11),
+            font=ctk.CTkFont("Arial", 12),
             text_color=TEXT_MUTED,
         )
         self._device_sub_lbl.pack()
@@ -680,30 +680,30 @@ class FonexProvisioner(ctk.CTk):
         outer.place(relx=0.5, rely=0.5, anchor="center")
 
         ctk.CTkLabel(outer, text="⬇️  Installing FONEX App",
-                     font=ctk.CTkFont("Arial", 24, "bold"), text_color=TEXT).pack(pady=(0, 8))
+                     font=ctk.CTkFont("Arial", 28, "bold"), text_color=TEXT).pack(pady=(0, 10))
         ctk.CTkLabel(outer, text="Please wait — do not disconnect the phone.",
-                     font=ctk.CTkFont("Arial", 12), text_color=TEXT_SEC).pack()
+                     font=ctk.CTkFont("Arial", 13), text_color=TEXT_SEC).pack()
 
         self._install_status = ctk.CTkLabel(
             outer, text="Preparing installation…",
-            font=ctk.CTkFont("Arial", 13), text_color=ORANGE,
+            font=ctk.CTkFont("Arial", 15, "bold"), text_color=ORANGE,
         )
-        self._install_status.pack(pady=16)
+        self._install_status.pack(pady=20)
 
-        self._install_bar = ctk.CTkProgressBar(outer, width=500, mode="indeterminate",
+        self._install_bar = ctk.CTkProgressBar(outer, width=600, mode="indeterminate",
                                                progress_color=ACCENT, fg_color=BORDER,
-                                               corner_radius=8, height=10)
+                                               corner_radius=10, height=12)
         self._install_bar.pack()
         self._install_bar.start()
 
-        log_frame = self._card(outer, width=500)
-        log_frame.pack(fill="x", padx=16, pady=14, ipady=8, ipadx=8)
+        log_frame = self._card(outer, width=600)
+        log_frame.pack(fill="x", padx=20, pady=18, ipady=12, ipadx=12)
 
-        self._log_box = ctk.CTkTextbox(log_frame, height=150, width=500,
+        self._log_box = ctk.CTkTextbox(log_frame, height=160, width=600,
                                         fg_color="transparent",
                                         text_color=TEXT_SEC,
-                                        font=ctk.CTkFont("Courier New", 11))
-        self._log_box.pack(padx=6, pady=4)
+                                        font=ctk.CTkFont("Courier New", 12))
+        self._log_box.pack(padx=8, pady=6)
         self._log_box.configure(state="normal")
 
         threading.Thread(target=self._do_install, daemon=True).start()
@@ -759,30 +759,30 @@ class FonexProvisioner(ctk.CTk):
         outer.place(relx=0.5, rely=0.5, anchor="center")
 
         ctk.CTkLabel(outer, text="🔒  Setting Device Owner",
-                     font=ctk.CTkFont("Arial", 24, "bold"), text_color=TEXT).pack(pady=(0, 8))
+                     font=ctk.CTkFont("Arial", 28, "bold"), text_color=TEXT).pack(pady=(0, 10))
         ctk.CTkLabel(outer,
                      text="This gives FONEX control to enforce the payment lock system on this device.",
-                     font=ctk.CTkFont("Arial", 12), text_color=TEXT_SEC, wraplength=480).pack()
+                     font=ctk.CTkFont("Arial", 13), text_color=TEXT_SEC, wraplength=560).pack()
 
         self._owner_status = ctk.CTkLabel(
             outer, text="Configuring device…",
-            font=ctk.CTkFont("Arial", 13, "bold"), text_color=ORANGE,
+            font=ctk.CTkFont("Arial", 15, "bold"), text_color=ORANGE,
         )
-        self._owner_status.pack(pady=16)
+        self._owner_status.pack(pady=20)
 
-        self._owner_bar = ctk.CTkProgressBar(outer, width=500, mode="indeterminate",
+        self._owner_bar = ctk.CTkProgressBar(outer, width=600, mode="indeterminate",
                                               progress_color=ACCENT, fg_color=BORDER,
-                                              corner_radius=8, height=10)
+                                              corner_radius=10, height=12)
         self._owner_bar.pack()
         self._owner_bar.start()
 
-        log_frame = self._card(outer, width=500)
-        log_frame.pack(fill="x", padx=16, pady=14, ipady=8, ipadx=8)
-        self._owner_log = ctk.CTkTextbox(log_frame, height=140, width=500,
+        log_frame = self._card(outer, width=600)
+        log_frame.pack(fill="x", padx=20, pady=18, ipady=12, ipadx=12)
+        self._owner_log = ctk.CTkTextbox(log_frame, height=150, width=600,
                                           fg_color="transparent",
                                           text_color=TEXT_SEC,
-                                          font=ctk.CTkFont("Courier New", 11))
-        self._owner_log.pack(padx=6, pady=4)
+                                          font=ctk.CTkFont("Courier New", 12))
+        self._owner_log.pack(padx=8, pady=6)
         self._owner_log.configure(state="disabled")
 
         threading.Thread(target=self._do_set_owner, daemon=True).start()
@@ -888,17 +888,17 @@ class FonexProvisioner(ctk.CTk):
         # Success icon
         ctk.CTkLabel(
             outer, text="🎉",
-            font=ctk.CTkFont("Arial", 72),
-        ).pack(pady=(0, 10))
+            font=ctk.CTkFont("Arial", 84),
+        ).pack(pady=(0, 16))
 
         ctk.CTkLabel(outer, text="Device Provisioned!",
-                     font=ctk.CTkFont("Arial", 28, "bold"), text_color=GREEN).pack()
+                     font=ctk.CTkFont("Arial", 32, "bold"), text_color=GREEN).pack()
         ctk.CTkLabel(outer, text="The phone is now protected by FONEX.",
-                     font=ctk.CTkFont("Arial", 13), text_color=TEXT_SEC).pack(pady=(4, 24))
+                     font=ctk.CTkFont("Arial", 14), text_color=TEXT_SEC).pack(pady=(6, 28))
 
         # Summary card
-        card = self._card(outer, width=480)
-        card.pack(fill="x", ipadx=20, ipady=14, padx=16)
+        card = self._card(outer, width=580)
+        card.pack(fill="x", ipadx=24, ipady=18, padx=20)
 
         summary = [
             ("✅", "FONEX app installed"),
@@ -909,18 +909,18 @@ class FonexProvisioner(ctk.CTk):
         ]
         for check, text in summary:
             row = ctk.CTkFrame(card, fg_color="transparent")
-            row.pack(fill="x", pady=4, padx=16)
-            ctk.CTkLabel(row, text=check, font=ctk.CTkFont("Arial", 14),
-                         text_color=GREEN, width=28).pack(side="left")
-            ctk.CTkLabel(row, text=text, font=ctk.CTkFont("Arial", 12),
+            row.pack(fill="x", pady=6, padx=20)
+            ctk.CTkLabel(row, text=check, font=ctk.CTkFont("Arial", 16),
+                         text_color=GREEN, width=32).pack(side="left")
+            ctk.CTkLabel(row, text=text, font=ctk.CTkFont("Arial", 13),
                          text_color=TEXT_SEC, anchor="w").pack(side="left")
 
         ctk.CTkLabel(
             outer,
             text="Unplug the phone — it is ready to be handed to the customer.",
-            font=ctk.CTkFont("Arial", 12, "bold"),
+            font=ctk.CTkFont("Arial", 13, "bold"),
             text_color=CYAN,
-        ).pack(pady=(20, 0))
+        ).pack(pady=(24, 0))
 
     def _restart(self):
         self._show_step_welcome()
