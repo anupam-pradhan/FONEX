@@ -8,7 +8,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'config.dart';
-
+import 'services/device_storage_service.dart';
+import 'services/sync_service.dart';
 // =============================================================================
 // FONEX Powered by Roy Communication — Device Control System
 // =============================================================================
@@ -622,7 +623,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   @override
   void initState() {
     super.initState();
+    // Initialize sync service for enterprise-level sync
     WidgetsBinding.instance.addObserver(this);
+    // Initialize sync service for enterprise-level sync
+    SyncService().initialize();
     _initialize();
     // Poll SIM state every 60 seconds while app is active (optimized: only when needed)
     _simCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) {
@@ -640,6 +644,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   @override
   void dispose() {
     _simCheckTimer?.cancel();
+    _serverCheckInTimer?.cancel();
+    SyncService().dispose();
     _serverCheckInTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -804,14 +810,17 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
   }
 
-  /// Backend check-in — tells server device state and obeys server commands.
-  /// Fails silently if offline. Includes retry logic for better accuracy.
+  /// Backend check-in — optimized sync with auto-registration and queue management
+  /// Uses enterprise-level sync service for reliability and offline support
   Future<void> _serverCheckIn({int retryCount = 0}) async {
-    const maxRetries = 2;
+    if (_isConnecting) return; // Prevent concurrent check-ins
+    
+    _isConnecting = true;
     try {
       final deviceHash = await DeviceHashUtil.getDeviceHash();
       String imei = "Not Found";
       Map<String, dynamic> metadata = {};
+      
       try {
         final info = await _channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
         if (info != null) {
@@ -820,141 +829,106 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             'model': info['deviceModel']?.toString() ?? 'Unknown',
             'manufacturer': info['manufacturer']?.toString() ?? 'Unknown',
             'android_version': info['androidVersion'] ?? 0,
+            'is_device_owner': _isDeviceOwner,
           };
         }
       } catch (_) {}
 
-      try {
-        debugPrint('Sending check-in payload (attempt ${retryCount + 1}): ${jsonEncode({
-          'device_hash': deviceHash,
-          'imei': imei,
-          'is_locked': _isDeviceLocked,
-          'days_remaining': _daysRemaining,
-          'metadata': metadata,
-        })}');
+      // Check if this is first registration and auto-save to local DB
+      final isRegistered = await DeviceStorageService.isDeviceRegistered();
+      if (!isRegistered) {
+        debugPrint('🆕 First-time registration detected - auto-saving to local DB...');
+        await SyncService().registerDevice(
+          deviceHash: deviceHash,
+          imei: imei,
+          metadata: metadata,
+        );
+      }
 
-        final response = await http.post(
-          Uri.parse('$_serverBaseUrl/checkin'),
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'FONEX-Device/1.0',
-          },
-          body: jsonEncode({
-            'device_hash': deviceHash,
-            'imei': imei,
-            'is_locked': _isDeviceLocked,
-            'days_remaining': _daysRemaining,
-            'metadata': metadata,
-            'timestamp': DateTime.now().toIso8601String(),
-          }),
-        ).timeout(const Duration(seconds: 10));
+      // Perform optimized check-in using sync service
+      final syncService = SyncService();
+      final response = await syncService.performCheckIn(
+        deviceHash: deviceHash,
+        imei: imei,
+        isLocked: _isDeviceLocked,
+        daysRemaining: _daysRemaining,
+        metadata: metadata,
+      );
 
-        debugPrint('Server check-in HTTP status: ${response.statusCode}');
-        debugPrint('Server check-in HTTP body: ${response.body}');
-
-        if (response.statusCode == 200) {
-          if (mounted) {
-            setState(() {
-              _isServerConnected = true;
-              _serverStatusMessage = 'Connected';
-              _lastServerSync = DateTime.now();
-            });
-          }
-          
-          final data = jsonDecode(response.body) as Map<String, dynamic>;
-          final rawAction = data['action'] as String? ?? 'none';
-          final action = rawAction.toLowerCase();
-          
-          debugPrint('Server check-in response: action=$action');
-          
-          // Execute server commands with accuracy
-          switch (action) {
-            case 'lock':
-              await _engageDeviceLock();
-              if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
-              debugPrint('Device locked by server command');
-              break;
-            case 'unlock':
-              await _disengageDeviceLock();
-              debugPrint('Device unlocked by server command');
-              break;
-            case 'extend':
-            case 'extend_days':
-              final days = data['days'] as int? ?? _lockAfterDays;
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setInt(
-                _keyLastVerified,
-                DateTime.now().subtract(Duration(days: _lockAfterDays - days)).millisecondsSinceEpoch,
-              );
-              if (mounted) setState(() => _daysRemaining = days);
-              debugPrint('Device extended by server: $days days');
-              break;
-            case 'paid_in_full':
-            case 'mark_paid_in_full':
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setBool('is_paid_in_full', true);
-              if (mounted) setState(() => _isPaidInFull = true);
-              await _disengageDeviceLock();
-              try {
-                await _channel.invokeMethod('clearDeviceOwner');
-                debugPrint('Device marked as paid in full - restrictions removed');
-              } on PlatformException catch (e) {
-                debugPrint('Error clearing device owner: $e');
-              }
-              break;
-            case 'none':
-              debugPrint('No action required from server');
-              break;
-            default:
-              debugPrint('Unknown server action: $action');
-              break;
-          }
-        } else if (response.statusCode >= 500 && retryCount < maxRetries) {
-          // Retry on server errors with exponential backoff
-          debugPrint('Server error ${response.statusCode}, retrying in ${(retryCount + 1) * 2} seconds...');
-          await Future.delayed(Duration(seconds: (retryCount + 1) * 2));
-          await _serverCheckIn(retryCount: retryCount + 1);
-        } else {
-          debugPrint('Failed to check in. Server returned status: ${response.statusCode}');
+      if (response != null) {
+        if (mounted) {
+          setState(() {
+            _isServerConnected = true;
+            _serverStatusMessage = 'Connected';
+            _lastServerSync = DateTime.now();
+          });
         }
-      } on TimeoutException {
+        
+        final rawAction = response['action'] as String? ?? 'none';
+        final action = rawAction.toLowerCase();
+        
+        debugPrint('Server check-in response: action=$action');
+        
+        // Execute server commands with accuracy
+        switch (action) {
+          case 'lock':
+            await _engageDeviceLock();
+            if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
+            debugPrint('Device locked by server command');
+            break;
+          case 'unlock':
+            await _disengageDeviceLock();
+            debugPrint('Device unlocked by server command');
+            break;
+          case 'extend':
+          case 'extend_days':
+            final days = response['days'] as int? ?? _lockAfterDays;
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setInt(
+              _keyLastVerified,
+              DateTime.now().subtract(Duration(days: _lockAfterDays - days)).millisecondsSinceEpoch,
+            );
+            if (mounted) setState(() => _daysRemaining = days);
+            debugPrint('Device extended by server: $days days');
+            break;
+          case 'paid_in_full':
+          case 'mark_paid_in_full':
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('is_paid_in_full', true);
+            if (mounted) setState(() => _isPaidInFull = true);
+            await _disengageDeviceLock();
+            try {
+              await _channel.invokeMethod('clearDeviceOwner');
+              debugPrint('Device marked as paid in full - restrictions removed');
+            } on PlatformException catch (e) {
+              debugPrint('Error clearing device owner: $e');
+            }
+            break;
+          case 'none':
+            debugPrint('No action required from server');
+            break;
+          default:
+            debugPrint('Unknown server action: $action');
+            break;
+        }
+      } else {
+        // Sync failed but queued for retry
         if (mounted) {
           setState(() {
             _isServerConnected = false;
-            _serverStatusMessage = 'Connection timeout';
+            _serverStatusMessage = 'Queued for sync';
           });
         }
-        debugPrint('Server check-in timeout');
-        if (retryCount < maxRetries) {
-          debugPrint('Retrying after timeout...');
-          await Future.delayed(Duration(seconds: (retryCount + 1) * 2));
-          await _serverCheckIn(retryCount: retryCount + 1);
-        }
-      } catch (e, stacktrace) {
-        if (mounted) {
-          setState(() {
-            _isServerConnected = false;
-            _serverStatusMessage = 'Connection failed';
-          });
-        }
-        debugPrint('Error during _serverCheckIn: $e');
-        if (retryCount < maxRetries && e is! FormatException) {
-          // Retry on network errors, but not on JSON parsing errors
-          debugPrint('Retrying after error...');
-          await Future.delayed(Duration(seconds: (retryCount + 1) * 2));
-          await _serverCheckIn(retryCount: retryCount + 1);
-        } else {
-          debugPrint('Fatal error during _serverCheckIn: $e\n$stacktrace');
-        }
+        debugPrint('Check-in queued for retry (offline or server error)');
       }
     } catch (e, stacktrace) {
       if (mounted) {
         setState(() {
           _isServerConnected = false;
-          _serverStatusMessage = 'Connection error';
+          _serverStatusMessage = 'Connection failed';
         });
       }
-      debugPrint('Fatal error during _serverCheckIn: $e\n$stacktrace');
+      debugPrint('Error during _serverCheckIn: $e\n$stacktrace');
     } finally {
       if (mounted) {
         setState(() => _isConnecting = false);
