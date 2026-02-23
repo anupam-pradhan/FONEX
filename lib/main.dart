@@ -668,6 +668,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     _serverCheckInTimer = Timer.periodic(
       Duration(minutes: FonexConfig.serverCheckInIntervalMinutes),
       (_) {
+        RealtimeCommandService().ensureConnected();
         if (mounted && !_isConnecting) unawaited(_serverCheckIn());
       },
     );
@@ -741,6 +742,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           _checkSimState();
           unawaited(_ensureBackgroundKillProtection(allowUserPrompt: false));
           RealtimeCommandService().onAppResumed();
+          RealtimeCommandService().ensureConnected();
           // Immediate server check-in when app resumes for accurate status
           if (!_isConnecting) unawaited(_serverCheckIn());
         }
@@ -983,6 +985,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   /// Backend check-in — optimized sync with auto-registration and queue management
   /// Uses enterprise-level sync service for reliability and offline support
   Future<void> _serverCheckIn() async {
+    RealtimeCommandService().ensureConnected();
     if (_isConnecting) return;
     if (!await _hasNetworkConnectivity()) {
       if (mounted) {

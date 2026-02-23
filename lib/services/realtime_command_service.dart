@@ -39,6 +39,7 @@ class RealtimeCommandService {
 
   bool _isStarted = false;
   bool _isReconnecting = false;
+  bool _isSubscribed = false;
   int _reconnectAttempt = 0;
   String? _deviceId;
   final Set<String> _acceptedDeviceIds = <String>{};
@@ -48,6 +49,7 @@ class RealtimeCommandService {
   final Set<String> _inFlightCommandIds = <String>{};
 
   bool get isStarted => _isStarted;
+  bool get isSubscribed => _isSubscribed;
 
   Future<void> start({
     required String deviceId,
@@ -99,7 +101,14 @@ class RealtimeCommandService {
     await _unsubscribe();
     _acceptedDeviceIds.clear();
     _reconnectAttempt = 0;
+    _isSubscribed = false;
     _isStarted = false;
+  }
+
+  void ensureConnected() {
+    if (!_isStarted) return;
+    if (_isSubscribed || _isReconnecting) return;
+    _scheduleReconnect(const Duration(milliseconds: 200));
   }
 
   void sendCommandAck({
@@ -139,6 +148,7 @@ class RealtimeCommandService {
     channel.subscribe((status, [error]) {
       if (status == RealtimeSubscribeStatus.subscribed) {
         _reconnectAttempt = 0;
+        _isSubscribed = true;
         debugPrint('Realtime subscribed for device $deviceId');
         return;
       }
@@ -146,6 +156,7 @@ class RealtimeCommandService {
       if (status == RealtimeSubscribeStatus.channelError ||
           status == RealtimeSubscribeStatus.timedOut ||
           status == RealtimeSubscribeStatus.closed) {
+        _isSubscribed = false;
         debugPrint(
           'Realtime disconnected ($status): ${error ?? 'no error details'}',
         );
@@ -159,6 +170,7 @@ class RealtimeCommandService {
   Future<void> _unsubscribe() async {
     final existing = _channel;
     _channel = null;
+    _isSubscribed = false;
     if (existing != null) {
       try {
         await Supabase.instance.client.removeChannel(existing);

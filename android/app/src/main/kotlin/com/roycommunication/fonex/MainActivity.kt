@@ -15,6 +15,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
@@ -34,6 +35,9 @@ class MainActivity : FlutterActivity() {
 
     private lateinit var deviceLockManager: DeviceLockManager
     private var wakeLock: PowerManager.WakeLock? = null
+
+    // Use TextureView to avoid SurfaceView buffer issues on some OEM ROMs.
+    override fun getRenderMode(): RenderMode = RenderMode.texture
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
