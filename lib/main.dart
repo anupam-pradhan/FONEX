@@ -2142,6 +2142,78 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     );
   }
 
+  void _showPaymentQr() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: FonexColors.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: FonexColors.cardBorder),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Scan to Pay EMI',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: FonexColors.textPrimary,
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    color: FonexColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.asset(
+                'assets/images/payment_qr_code/bharat_pay.jpg',
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => Container(
+                  height: 220,
+                  alignment: Alignment.center,
+                  color: FonexColors.card,
+                  child: Text(
+                    'Payment QR not found',
+                    style: GoogleFonts.inter(
+                      color: FonexColors.textSecondary,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Show payment screenshot at ${widget.storeName} after payment.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                color: FonexColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -2484,6 +2556,37 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                                           ),
                                         ),
                                       ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton.icon(
+                                      onPressed: _showPaymentQr,
+                                      icon: const Icon(
+                                        Icons.qr_code_2_rounded,
+                                        size: 18,
+                                      ),
+                                      label: Text(
+                                        'Pay EMI (Show QR)',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: FonexColors.accent,
+                                        foregroundColor: Colors.white,
+                                        elevation: 0,
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 12,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ],

@@ -26,6 +26,7 @@ class BootReceiver : BroadcastReceiver() {
 
             KeepAliveService.start(context)
             KeepAliveWatchdogWorker.schedule(context)
+            DeviceLockManager(context).enforceFactoryResetBlock()
 
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val isLocked = prefs.getBoolean(KEY_DEVICE_LOCKED, false)

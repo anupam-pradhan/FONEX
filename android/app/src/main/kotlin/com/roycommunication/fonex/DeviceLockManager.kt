@@ -290,13 +290,15 @@ class DeviceLockManager(private val context: Context) {
             if (isDeviceOwner()) {
                 val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
                 if (!isPaidInFull) {
-                    // Re-apply restriction if not paid
+                    // Re-apply restrictions if not paid.
                     devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
+                    devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
                     Log.i(TAG, "Factory reset blocking enforced (EMI not paid)")
                     true
                 } else {
-                    // Remove restriction if paid
+                    // Remove restrictions only after full payment.
                     devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
+                    devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
                     Log.i(TAG, "Factory reset allowed (EMI paid in full)")
                     false
                 }

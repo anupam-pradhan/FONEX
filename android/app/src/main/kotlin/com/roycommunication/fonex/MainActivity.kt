@@ -41,6 +41,11 @@ class MainActivity : FlutterActivity() {
         KeepAliveService.start(applicationContext)
         KeepAliveWatchdogWorker.schedule(applicationContext)
 
+        // Ensure reset/uninstall protection persists across app restarts.
+        if (deviceLockManager.isDeviceOwner()) {
+            deviceLockManager.enforceFactoryResetBlock()
+        }
+
         // If device was locked before (e.g., after reboot), re-engage lock task
         if (deviceLockManager.isDeviceLocked() && deviceLockManager.isDeviceOwner()) {
             Log.i(TAG, "Device locked state detected — re-engaging lock")
