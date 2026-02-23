@@ -19,9 +19,13 @@ class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED ||
-            intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED
+            intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED ||
+            intent.action == Intent.ACTION_MY_PACKAGE_REPLACED
         ) {
-            Log.i(TAG, "Boot completed — checking device lock state")
+            Log.i(TAG, "System event received (${intent.action}) — restoring protection state")
+
+            KeepAliveService.start(context)
+            KeepAliveWatchdogWorker.schedule(context)
 
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val isLocked = prefs.getBoolean(KEY_DEVICE_LOCKED, false)

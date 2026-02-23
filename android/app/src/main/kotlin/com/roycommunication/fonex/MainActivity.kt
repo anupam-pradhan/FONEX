@@ -4,9 +4,15 @@ import android.os.Bundle
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import android.content.ComponentName
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.Context
+import android.net.Uri
+import android.os.BatteryManager
 import android.telephony.TelephonyManager
 import android.os.PowerManager
+import android.provider.Settings
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -32,6 +38,8 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         deviceLockManager = DeviceLockManager(applicationContext)
+        KeepAliveService.start(applicationContext)
+        KeepAliveWatchdogWorker.schedule(applicationContext)
 
         // If device was locked before (e.g., after reboot), re-engage lock task
         if (deviceLockManager.isDeviceLocked() && deviceLockManager.isDeviceOwner()) {
@@ -159,6 +167,33 @@ class MainActivity : FlutterActivity() {
                     result.success(tm.simState)
                 }
 
+                "getBatteryLevel" -> {
+                    result.success(getBatteryLevel())
+                }
+
+                "startKeepAliveService" -> {
+                    KeepAliveService.start(applicationContext)
+                    result.success(true)
+                }
+
+                "scheduleKeepAliveWatchdog" -> {
+                    KeepAliveWatchdogWorker.schedule(applicationContext)
+                    result.success(true)
+                }
+
+                "isIgnoringBatteryOptimizations" -> {
+                    result.success(isIgnoringBatteryOptimizations())
+                }
+
+                "requestIgnoreBatteryOptimizations" -> {
+                    requestIgnoreBatteryOptimizations()
+                    result.success(true)
+                }
+
+                "openAutoStartSettings" -> {
+                    result.success(openAutoStartSettings())
+                }
+
                 "showResetBlockedMessage" -> {
                     android.widget.Toast.makeText(
                         this,
@@ -206,6 +241,106 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+    }
+
+    private fun getBatteryLevel(): Int? {
+        return try {
+            val batteryManager = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+            val level = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            if (level in 0..100) {
+                level
+            } else {
+                val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                val fallbackLevel = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+                if (fallbackLevel >= 0 && scale > 0) {
+                    (fallbackLevel * 100) / scale
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error reading battery level: ${e.message}", e)
+            null
+        }
+    }
+
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return true
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun requestIgnoreBatteryOptimizations() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return
+        if (isIgnoringBatteryOptimizations()) return
+
+        try {
+            val intent = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:$packageName")
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to request battery optimization exemption: ${e.message}", e)
+            try {
+                val fallbackIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(fallbackIntent)
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun openAutoStartSettings(): Boolean {
+        val intents = listOf(
+            Intent().apply {
+                component = ComponentName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.autostart.AutoStartManagementActivity"
+                )
+            },
+            Intent().apply {
+                component = ComponentName(
+                    "com.coloros.safecenter",
+                    "com.coloros.safecenter.permission.startup.StartupAppListActivity"
+                )
+            },
+            Intent().apply {
+                component = ComponentName(
+                    "com.oplus.safecenter",
+                    "com.oplus.safecenter.startupapp.StartupAppListActivity"
+                )
+            },
+            Intent().apply {
+                component = ComponentName(
+                    "com.vivo.permissionmanager",
+                    "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"
+                )
+            },
+            Intent().apply {
+                component = ComponentName(
+                    "com.iqoo.secure",
+                    "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"
+                )
+            },
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", packageName, null)
+            },
+        )
+
+        for (intent in intents) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                return true
+            } catch (_: Exception) {
+                // Try next intent candidate.
+            }
+        }
+        return false
     }
 
     /**

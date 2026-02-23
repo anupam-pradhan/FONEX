@@ -63,7 +63,7 @@ class SyncService {
     try {
       // Check if already registered locally
       final isRegistered = await DeviceStorageService.isDeviceRegistered();
-      
+
       if (!isRegistered) {
         // Save to local storage first (offline-first approach)
         await DeviceStorageService.saveDeviceRegistration(
@@ -111,22 +111,24 @@ class SyncService {
     required Map<String, dynamic> metadata,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${FonexConfig.serverBaseUrl}/checkin'),
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'FONEX-Device/1.0',
-        },
-        body: jsonEncode({
-          'device_hash': deviceHash,
-          'imei': imei,
-          'is_locked': false,
-          'days_remaining': FonexConfig.lockAfterDays,
-          'metadata': metadata,
-          'timestamp': DateTime.now().toIso8601String(),
-          'is_first_registration': true, // Flag for backend
-        }),
-      ).timeout(Duration(seconds: FonexConfig.apiTimeoutSeconds));
+      final response = await http
+          .post(
+            Uri.parse('${FonexConfig.serverBaseUrl}/checkin'),
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent': 'FONEX-Device/1.0',
+            },
+            body: jsonEncode({
+              'device_hash': deviceHash,
+              'imei': imei,
+              'is_locked': false,
+              'days_remaining': FonexConfig.lockAfterDays,
+              'metadata': metadata,
+              'timestamp': DateTime.now().toIso8601String(),
+              'is_first_registration': true, // Flag for backend
+            }),
+          )
+          .timeout(Duration(seconds: FonexConfig.apiTimeoutSeconds));
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         return true;
@@ -144,9 +146,12 @@ class SyncService {
   Future<Map<String, dynamic>?> performCheckIn({
     required String deviceHash,
     required String imei,
-    required bool isLocked,
-    required int daysRemaining,
-    required Map<String, dynamic> metadata,
+    String? deviceId,
+    int? batteryLevel,
+    DateTime? lastSeen,
+    bool? isLocked,
+    int? daysRemaining,
+    Map<String, dynamic>? metadata,
   }) async {
     // Ensure device is registered locally first
     final isRegistered = await DeviceStorageService.isDeviceRegistered();
@@ -155,28 +160,36 @@ class SyncService {
       await registerDevice(
         deviceHash: deviceHash,
         imei: imei,
-        metadata: metadata,
+        metadata: metadata ?? {},
       );
     }
 
     // Perform check-in with retry logic
     for (int attempt = 0; attempt < _maxRetries; attempt++) {
       try {
-        final response = await http.post(
-          Uri.parse('${FonexConfig.serverBaseUrl}/checkin'),
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'FONEX-Device/1.0',
-          },
-          body: jsonEncode({
-            'device_hash': deviceHash,
-            'imei': imei,
-            'is_locked': isLocked,
-            'days_remaining': daysRemaining,
-            'metadata': metadata,
-            'timestamp': DateTime.now().toIso8601String(),
-          }),
-        ).timeout(Duration(seconds: FonexConfig.apiTimeoutSeconds));
+        final payload = <String, dynamic>{
+          'device_hash': deviceHash,
+          if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
+          'imei': imei,
+          'battery': batteryLevel,
+          'last_seen': (lastSeen ?? DateTime.now()).toIso8601String(),
+          'timestamp': DateTime.now().toIso8601String(),
+        };
+        if (isLocked != null) payload['is_locked'] = isLocked;
+        if (daysRemaining != null) payload['days_remaining'] = daysRemaining;
+        if (metadata != null && metadata.isNotEmpty)
+          payload['metadata'] = metadata;
+
+        final response = await http
+            .post(
+              Uri.parse('${FonexConfig.serverBaseUrl}/checkin'),
+              headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': 'FONEX-Device/1.0',
+              },
+              body: jsonEncode(payload),
+            )
+            .timeout(Duration(seconds: FonexConfig.apiTimeoutSeconds));
 
         if (response.statusCode == 200) {
           await DeviceStorageService.updateLastSyncTimestamp();
@@ -191,10 +204,13 @@ class SyncService {
           await DeviceStorageService.addToSyncQueue({
             'type': 'checkin',
             'device_hash': deviceHash,
+            if (deviceId != null) 'device_id': deviceId,
             'imei': imei,
-            'is_locked': isLocked,
-            'days_remaining': daysRemaining,
-            'metadata': metadata,
+            'battery': batteryLevel,
+            'last_seen': (lastSeen ?? DateTime.now()).toIso8601String(),
+            if (isLocked != null) 'is_locked': isLocked,
+            if (daysRemaining != null) 'days_remaining': daysRemaining,
+            if (metadata != null) 'metadata': metadata,
           });
           return null;
         }
@@ -208,10 +224,13 @@ class SyncService {
           await DeviceStorageService.addToSyncQueue({
             'type': 'checkin',
             'device_hash': deviceHash,
+            if (deviceId != null) 'device_id': deviceId,
             'imei': imei,
-            'is_locked': isLocked,
-            'days_remaining': daysRemaining,
-            'metadata': metadata,
+            'battery': batteryLevel,
+            'last_seen': (lastSeen ?? DateTime.now()).toIso8601String(),
+            if (isLocked != null) 'is_locked': isLocked,
+            if (daysRemaining != null) 'days_remaining': daysRemaining,
+            if (metadata != null) 'metadata': metadata,
           });
           await DeviceStorageService.trackFailedSync('Check-in error: $e');
           return null;
@@ -244,7 +263,9 @@ class SyncService {
       // Process items in batches
       final batches = <List<Map<String, dynamic>>>[];
       for (int i = 0; i < queue.length; i += _batchSize) {
-        final end = (i + _batchSize < queue.length) ? i + _batchSize : queue.length;
+        final end = (i + _batchSize < queue.length)
+            ? i + _batchSize
+            : queue.length;
         batches.add(queue.sublist(i, end));
       }
 
@@ -291,11 +312,17 @@ class SyncService {
             metadata: item['metadata'] as Map<String, dynamic>? ?? {},
           );
         } else if (type == 'checkin') {
+          final rawLastSeen = item['last_seen'] as String?;
           final result = await performCheckIn(
             deviceHash: item['device_hash'] as String,
             imei: item['imei'] as String,
-            isLocked: item['is_locked'] as bool? ?? false,
-            daysRemaining: item['days_remaining'] as int? ?? 0,
+            deviceId: item['device_id'] as String?,
+            batteryLevel: item['battery'] as int?,
+            lastSeen: rawLastSeen != null
+                ? DateTime.tryParse(rawLastSeen)
+                : null,
+            isLocked: item['is_locked'] as bool?,
+            daysRemaining: item['days_remaining'] as int?,
             metadata: item['metadata'] as Map<String, dynamic>? ?? {},
           );
           success = result != null;

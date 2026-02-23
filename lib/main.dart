@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:convert';
 import 'config.dart';
 import 'services/device_storage_service.dart';
+import 'services/realtime_command_service.dart';
 import 'services/sync_service.dart';
 // =============================================================================
 // FONEX Powered by Roy Communication — Device Control System
@@ -26,6 +29,8 @@ const int _cooldownSeconds = FonexConfig.cooldownSeconds;
 const String _keyLastVerified = FonexConfig.keyLastVerified;
 const String _keyDeviceLocked = FonexConfig.keyDeviceLocked;
 const String _keySimAbsentSince = FonexConfig.keySimAbsentSince;
+const String _keyBatteryOptimizationPrompted = 'battery_optimization_prompted';
+const String _keyAutoStartPrompted = 'auto_start_prompted';
 const String _serverBaseUrl = FonexConfig.serverBaseUrl;
 const String _supportPhone1 = FonexConfig.supportPhone1;
 const String _supportPhone2 = FonexConfig.supportPhone2;
@@ -44,18 +49,22 @@ class DeviceHashUtil {
     if (salt == null) {
       final random = Random.secure();
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      salt = String.fromCharCodes(Iterable.generate(
-          8, (_) => chars.codeUnitAt(random.nextInt(chars.length))));
+      salt = String.fromCharCodes(
+        Iterable.generate(
+          8,
+          (_) => chars.codeUnitAt(random.nextInt(chars.length)),
+        ),
+      );
       await prefs.setString(_keySalt, salt);
     }
 
     final now = DateTime.now();
     final data = '$salt-${now.year}-${now.month}';
-    
+
     int hash = 5381;
     for (int i = 0; i < data.length; i++) {
-        hash = ((hash << 5) + hash) + data.codeUnitAt(i);
-        hash = hash & 0xFFFFFFFF; // 32-bit simulated bounds
+      hash = ((hash << 5) + hash) + data.codeUnitAt(i);
+      hash = hash & 0xFFFFFFFF; // 32-bit simulated bounds
     }
     return (hash.abs() % 1000000).toString().padLeft(6, '0');
   }
@@ -68,15 +77,33 @@ class DeviceHashUtil {
   }
 }
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (FonexConfig.supabaseUrl.isNotEmpty &&
+      FonexConfig.supabaseAnonKey.isNotEmpty) {
+    try {
+      await Supabase.initialize(
+        url: FonexConfig.supabaseUrl,
+        anonKey: FonexConfig.supabaseAnonKey,
+      );
+    } catch (e) {
+      debugPrint('Supabase initialization failed: $e');
+    }
+  } else {
+    debugPrint(
+      'Supabase realtime is disabled (missing SUPABASE_URL or SUPABASE_ANON_KEY).',
+    );
+  }
+
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    systemNavigationBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-    systemNavigationBarIconBrightness: Brightness.light,
-  ));
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarIconBrightness: Brightness.light,
+    ),
+  );
   runApp(const FonexApp());
 }
 
@@ -242,11 +269,11 @@ class _FloatingParticlesState extends State<FloatingParticles>
 class _Particle {
   final double x, y, size, speed, opacity;
   _Particle(Random r)
-      : x = r.nextDouble(),
-        y = r.nextDouble(),
-        size = 1.0 + r.nextDouble() * 2.5,
-        speed = 0.2 + r.nextDouble() * 0.8,
-        opacity = 0.05 + r.nextDouble() * 0.15;
+    : x = r.nextDouble(),
+      y = r.nextDouble(),
+      size = 1.0 + r.nextDouble() * 2.5,
+      speed = 0.2 + r.nextDouble() * 0.8,
+      opacity = 0.05 + r.nextDouble() * 0.15;
 }
 
 class _ParticlePainter extends CustomPainter {
@@ -456,9 +483,7 @@ class StoreWallpaper extends StatelessWidget {
         children: [
           // Background pattern
           Positioned.fill(
-            child: CustomPaint(
-              painter: _WallpaperPatternPainter(),
-            ),
+            child: CustomPaint(painter: _WallpaperPatternPainter()),
           ),
           // Store info overlay at top
           Positioned(
@@ -467,7 +492,10 @@ class StoreWallpaper extends StatelessWidget {
             right: 0,
             child: SafeArea(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
@@ -506,20 +534,23 @@ class StoreWallpaper extends StatelessWidget {
                       ],
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: isLocked
                             ? FonexColors.red.withValues(alpha: 0.2)
                             : daysRemaining <= 7
-                                ? FonexColors.orange.withValues(alpha: 0.2)
-                                : FonexColors.green.withValues(alpha: 0.2),
+                            ? FonexColors.orange.withValues(alpha: 0.2)
+                            : FonexColors.green.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
                           color: isLocked
                               ? FonexColors.red
                               : daysRemaining <= 7
-                                  ? FonexColors.orange
-                                  : FonexColors.green,
+                              ? FonexColors.orange
+                              : FonexColors.green,
                           width: 1.5,
                         ),
                       ),
@@ -533,8 +564,8 @@ class StoreWallpaper extends StatelessWidget {
                               color: isLocked
                                   ? FonexColors.red
                                   : daysRemaining <= 7
-                                      ? FonexColors.orange
-                                      : FonexColors.green,
+                                  ? FonexColors.orange
+                                  : FonexColors.green,
                             ),
                           ),
                           if (nextPaymentDate != null && !isLocked)
@@ -616,6 +647,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   String _serverStatusMessage = 'Connecting...';
   DateTime? _lastServerSync;
   bool _isConnecting = false;
+  String? _deviceHash;
+  String? _realtimeDeviceId;
 
   Timer? _simCheckTimer;
   Timer? _serverCheckInTimer;
@@ -625,18 +658,17 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     super.initState();
     // Initialize sync service for enterprise-level sync
     WidgetsBinding.instance.addObserver(this);
-    // Initialize sync service for enterprise-level sync
     SyncService().initialize();
-    _initialize();
+    unawaited(_initialize());
     // Poll SIM state every 60 seconds while app is active (optimized: only when needed)
     _simCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted && !_isPaidInFull) _checkSimState();
     });
-    // Periodic server check-in every 5 minutes for accurate EMI status (optimized: debounced)
+    // Lightweight heartbeat every 5 minutes
     _serverCheckInTimer = Timer.periodic(
-      const Duration(minutes: 5),
+      Duration(minutes: FonexConfig.serverCheckInIntervalMinutes),
       (_) {
-        if (mounted && !_isConnecting) _serverCheckIn();
+        if (mounted && !_isConnecting) unawaited(_serverCheckIn());
       },
     );
   }
@@ -646,7 +678,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     _simCheckTimer?.cancel();
     _serverCheckInTimer?.cancel();
     SyncService().dispose();
-    _serverCheckInTimer?.cancel();
+    unawaited(RealtimeCommandService().dispose());
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -663,17 +695,27 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         final absentSince = prefs.getInt(_keySimAbsentSince);
         if (absentSince == null) {
           await prefs.setInt(
-              _keySimAbsentSince, DateTime.now().millisecondsSinceEpoch);
+            _keySimAbsentSince,
+            DateTime.now().millisecondsSinceEpoch,
+          );
           debugPrint('SIM absent detected — grace period started (7 days).');
         } else {
-          final daysMissing =
-              DateTime.now().difference(
-                DateTime.fromMillisecondsSinceEpoch(absentSince)).inDays;
-          debugPrint('SIM absent for $daysMissing days (lock after $_simAbsentLockDays).');
+          final daysMissing = DateTime.now()
+              .difference(DateTime.fromMillisecondsSinceEpoch(absentSince))
+              .inDays;
+          debugPrint(
+            'SIM absent for $daysMissing days (lock after $_simAbsentLockDays).',
+          );
           if (daysMissing >= _simAbsentLockDays) {
-            debugPrint('SIM absent >$_simAbsentLockDays days — locking device.');
+            debugPrint(
+              'SIM absent >$_simAbsentLockDays days — locking device.',
+            );
             await _engageDeviceLock();
-            if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
+            if (mounted)
+              setState(() {
+                _isDeviceLocked = true;
+                _daysRemaining = 0;
+              });
           }
         }
       } else {
@@ -697,8 +739,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         if (mounted) {
           _checkTimerAndLock();
           _checkSimState();
+          unawaited(_ensureBackgroundKillProtection(allowUserPrompt: false));
+          RealtimeCommandService().onAppResumed();
           // Immediate server check-in when app resumes for accurate status
-          if (!_isConnecting) _serverCheckIn();
+          if (!_isConnecting) unawaited(_serverCheckIn());
         }
       });
     } else if (state == AppLifecycleState.paused) {
@@ -712,13 +756,17 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     if (prefs.getBool('is_paid_in_full') == true) {
       if (mounted) setState(() => _isPaidInFull = true);
     }
-    
+
     await _checkDeviceOwner();
+    unawaited(_ensureBackgroundKillProtection(allowUserPrompt: true));
+    _deviceHash = await DeviceHashUtil.getDeviceHash();
+    _realtimeDeviceId = _deviceHash;
+    await _startRealtimeListener();
     if (!_isPaidInFull) {
       await _checkTimerAndLock();
     }
     // Attempt server check-in (non-blocking, offline-safe)
-    _serverCheckIn();
+    unawaited(_serverCheckIn());
     if (mounted) setState(() => _isLoading = false);
   }
 
@@ -739,7 +787,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     if (lastVerifiedMs == null) {
       // First run — set initial verification timestamp
       await prefs.setInt(
-          _keyLastVerified, DateTime.now().millisecondsSinceEpoch);
+        _keyLastVerified,
+        DateTime.now().millisecondsSinceEpoch,
+      );
       await prefs.setBool(_keyDeviceLocked, false);
       if (mounted) {
         setState(() {
@@ -755,7 +805,11 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     // If explicitly marked locked in prefs, re-engage lock
     if (wasLocked) {
       await _engageDeviceLock();
-      if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
+      if (mounted)
+        setState(() {
+          _isDeviceLocked = true;
+          _daysRemaining = 0;
+        });
       return;
     }
 
@@ -766,7 +820,11 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
     if (daysSince >= _lockAfterDays) {
       await _engageDeviceLock();
-      if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
+      if (mounted)
+        setState(() {
+          _isDeviceLocked = true;
+          _daysRemaining = 0;
+        });
     } else {
       if (mounted) {
         setState(() {
@@ -796,7 +854,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       // Clear locked flag
       await prefs.setBool(_keyDeviceLocked, false);
       // Reset the verification timer to NOW — user gets a fresh 30-day window
-      await prefs.setInt(_keyLastVerified, DateTime.now().millisecondsSinceEpoch);
+      await prefs.setInt(
+        _keyLastVerified,
+        DateTime.now().millisecondsSinceEpoch,
+      );
       // Clear SIM absent timer too
       await prefs.remove(_keySimAbsentSince);
       if (mounted) {
@@ -810,22 +871,140 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
   }
 
+  Future<void> _startRealtimeListener() async {
+    final deviceId = _realtimeDeviceId;
+    if (deviceId == null || deviceId.isEmpty) return;
+
+    await RealtimeCommandService().start(
+      deviceId: deviceId,
+      onCommand: _handleRealtimeCommand,
+    );
+  }
+
+  Future<void> lockDeviceLocally() => _engageDeviceLock();
+
+  Future<void> unlockDeviceLocally() => _disengageDeviceLock();
+
+  Future<void> _handleRealtimeCommand(DeviceRealtimeCommand command) async {
+    switch (command.command) {
+      case 'LOCK':
+        if (!_isDeviceLocked) {
+          await lockDeviceLocally();
+          if (mounted) {
+            setState(() {
+              _isDeviceLocked = true;
+              _daysRemaining = 0;
+            });
+          }
+        }
+        break;
+      case 'UNLOCK':
+        if (_isDeviceLocked) {
+          await unlockDeviceLocally();
+        }
+        break;
+      default:
+        return;
+    }
+
+    sendCommandAck(
+      command.commandId,
+      command: command.command,
+      deviceId: command.deviceId,
+    );
+  }
+
+  void sendCommandAck(
+    String commandId, {
+    required String command,
+    String? deviceId,
+  }) {
+    RealtimeCommandService().sendCommandAck(
+      commandId: commandId,
+      command: command,
+      deviceId: deviceId,
+    );
+  }
+
+  Future<bool> _hasNetworkConnectivity() async {
+    final result = await Connectivity().checkConnectivity();
+    return result.any((item) => item != ConnectivityResult.none);
+  }
+
+  Future<void> _ensureBackgroundKillProtection({
+    required bool allowUserPrompt,
+  }) async {
+    try {
+      await _channel.invokeMethod('startKeepAliveService');
+      await _channel.invokeMethod('scheduleKeepAliveWatchdog');
+
+      final isIgnoringBatteryOptimizations =
+          await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
+          true;
+      if (isIgnoringBatteryOptimizations || !allowUserPrompt) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      final hasPromptedBattery =
+          prefs.getBool(_keyBatteryOptimizationPrompted) ?? false;
+      if (!hasPromptedBattery) {
+        await prefs.setBool(_keyBatteryOptimizationPrompted, true);
+        unawaited(_channel.invokeMethod('requestIgnoreBatteryOptimizations'));
+      }
+
+      final hasPromptedAutoStart =
+          prefs.getBool(_keyAutoStartPrompted) ?? false;
+      if (!hasPromptedAutoStart) {
+        await prefs.setBool(_keyAutoStartPrompted, true);
+        unawaited(_channel.invokeMethod('openAutoStartSettings'));
+      }
+    } catch (e) {
+      debugPrint('Background protection setup skipped: $e');
+    }
+  }
+
+  Future<int?> _getBatteryLevel() async {
+    try {
+      final level = await _channel.invokeMethod<int>('getBatteryLevel');
+      if (level == null) return null;
+      return level.clamp(0, 100);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Backend check-in — optimized sync with auto-registration and queue management
   /// Uses enterprise-level sync service for reliability and offline support
-  Future<void> _serverCheckIn({int retryCount = 0}) async {
-    if (_isConnecting) return; // Prevent concurrent check-ins
-    
-    _isConnecting = true;
+  Future<void> _serverCheckIn() async {
+    if (_isConnecting) return;
+    if (!await _hasNetworkConnectivity()) {
+      if (mounted) {
+        setState(() {
+          _isServerConnected = false;
+          _serverStatusMessage = 'Offline';
+        });
+      }
+      return;
+    }
+
+    if (mounted) {
+      setState(() => _isConnecting = true);
+    } else {
+      _isConnecting = true;
+    }
+
     try {
-      final deviceHash = await DeviceHashUtil.getDeviceHash();
+      final deviceHash = _deviceHash ?? await DeviceHashUtil.getDeviceHash();
+      _deviceHash = deviceHash;
       String imei = "Not Found";
-      Map<String, dynamic> metadata = {};
-      
+      Map<String, dynamic> registrationMetadata = {};
+
       try {
-        final info = await _channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+        final info = await _channel.invokeMapMethod<String, dynamic>(
+          'getDeviceInfo',
+        );
         if (info != null) {
           if (info.containsKey('imei')) imei = info['imei'] as String;
-          metadata = {
+          registrationMetadata = {
             'model': info['deviceModel']?.toString() ?? 'Unknown',
             'manufacturer': info['manufacturer']?.toString() ?? 'Unknown',
             'android_version': info['androidVersion'] ?? 0,
@@ -837,25 +1016,39 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       // Check if this is first registration and auto-save to local DB
       final isRegistered = await DeviceStorageService.isDeviceRegistered();
       if (!isRegistered) {
-        debugPrint('🆕 First-time registration detected - auto-saving to local DB...');
+        debugPrint(
+          '🆕 First-time registration detected - auto-saving to local DB...',
+        );
         await SyncService().registerDevice(
           deviceHash: deviceHash,
           imei: imei,
-          metadata: metadata,
+          metadata: registrationMetadata,
         );
       }
 
-      // Perform optimized check-in using sync service
+      // Lightweight heartbeat: status-only update (last_seen + battery)
+      final batteryLevel = await _getBatteryLevel();
       final syncService = SyncService();
       final response = await syncService.performCheckIn(
         deviceHash: deviceHash,
         imei: imei,
-        isLocked: _isDeviceLocked,
-        daysRemaining: _daysRemaining,
-        metadata: metadata,
+        deviceId: _realtimeDeviceId ?? deviceHash,
+        batteryLevel: batteryLevel,
+        lastSeen: DateTime.now(),
       );
 
       if (response != null) {
+        final serverDeviceId = (response['device_id'] ?? response['id'])
+            ?.toString()
+            .trim();
+        if (serverDeviceId != null &&
+            serverDeviceId.isNotEmpty &&
+            serverDeviceId != _realtimeDeviceId) {
+          _realtimeDeviceId = serverDeviceId;
+          await RealtimeCommandService().dispose();
+          await _startRealtimeListener();
+        }
+
         if (mounted) {
           setState(() {
             _isServerConnected = true;
@@ -863,22 +1056,19 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             _lastServerSync = DateTime.now();
           });
         }
-        
+
         final rawAction = response['action'] as String? ?? 'none';
         final action = rawAction.toLowerCase();
-        
+
         debugPrint('Server check-in response: action=$action');
-        
-        // Execute server commands with accuracy
+
+        // Heartbeat must not control lock/unlock. Those are realtime-only.
         switch (action) {
           case 'lock':
-            await _engageDeviceLock();
-            if (mounted) setState(() { _isDeviceLocked = true; _daysRemaining = 0; });
-            debugPrint('Device locked by server command');
-            break;
           case 'unlock':
-            await _disengageDeviceLock();
-            debugPrint('Device unlocked by server command');
+            debugPrint(
+              'Ignoring $action from heartbeat (realtime handles it).',
+            );
             break;
           case 'extend':
           case 'extend_days':
@@ -886,7 +1076,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             final prefs = await SharedPreferences.getInstance();
             await prefs.setInt(
               _keyLastVerified,
-              DateTime.now().subtract(Duration(days: _lockAfterDays - days)).millisecondsSinceEpoch,
+              DateTime.now()
+                  .subtract(Duration(days: _lockAfterDays - days))
+                  .millisecondsSinceEpoch,
             );
             if (mounted) setState(() => _daysRemaining = days);
             debugPrint('Device extended by server: $days days');
@@ -899,7 +1091,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             await _disengageDeviceLock();
             try {
               await _channel.invokeMethod('clearDeviceOwner');
-              debugPrint('Device marked as paid in full - restrictions removed');
+              debugPrint(
+                'Device marked as paid in full - restrictions removed',
+              );
             } on PlatformException catch (e) {
               debugPrint('Error clearing device owner: $e');
             }
@@ -912,7 +1106,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             break;
         }
       } else {
-        // Sync failed but queued for retry
+        // Sync failed but queued for retry by SyncService.
         if (mounted) {
           setState(() {
             _isServerConnected = false;
@@ -932,6 +1126,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     } finally {
       if (mounted) {
         setState(() => _isConnecting = false);
+      } else {
+        _isConnecting = false;
       }
     }
   }
@@ -940,7 +1136,6 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   Future<void> _manualServerConnect() async {
     if (_isConnecting) return;
     setState(() {
-      _isConnecting = true;
       _serverStatusMessage = 'Connecting...';
     });
     await _serverCheckIn();
@@ -951,9 +1146,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(
       _keyLastVerified,
-      DateTime.now()
-          .subtract(const Duration(days: 31))
-          .millisecondsSinceEpoch,
+      DateTime.now().subtract(const Duration(days: 31)).millisecondsSinceEpoch,
     );
     await _checkTimerAndLock();
   }
@@ -1041,8 +1234,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     final urgentColor = _daysRemaining <= 7
         ? FonexColors.red
         : _daysRemaining <= 14
-            ? FonexColors.orange
-            : FonexColors.accent;
+        ? FonexColors.orange
+        : FonexColors.accent;
 
     return GlassCard(
       padding: const EdgeInsets.all(20),
@@ -1063,8 +1256,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
               ),
               const Spacer(),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
                   color: urgentColor.withValues(alpha: 0.12),
@@ -1222,7 +1417,12 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
                   Navigator.pop(ctx);
                   final prefs = await SharedPreferences.getInstance();
                   final now = DateTime.now();
-                  await prefs.setInt(_keySimAbsentSince, now.subtract(const Duration(days: 7)).millisecondsSinceEpoch);
+                  await prefs.setInt(
+                    _keySimAbsentSince,
+                    now
+                        .subtract(const Duration(days: 7))
+                        .millisecondsSinceEpoch,
+                  );
                   await _checkSimState(); // trigger immediate recalculation
                 },
                 icon: const Icon(Icons.sim_card_alert_rounded, size: 20),
@@ -1237,7 +1437,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                     side: BorderSide(
-                        color: FonexColors.red.withValues(alpha: 0.3)),
+                      color: FonexColors.red.withValues(alpha: 0.3),
+                    ),
                   ),
                 ),
               ),
@@ -1280,125 +1481,6 @@ class NormalModeScreen extends StatefulWidget {
 }
 
 class _NormalModeScreenState extends State<NormalModeScreen> {
-  Timer? _periodicCheckInTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    // Periodic server check-in every 5 minutes for accurate EMI status
-    _periodicCheckInTimer = Timer.periodic(
-      const Duration(minutes: 5),
-      (_) => _performServerCheckIn(),
-    );
-    // Initial check-in after 30 seconds
-    Future.delayed(const Duration(seconds: 30), _performServerCheckIn);
-  }
-
-  @override
-  void dispose() {
-    _periodicCheckInTimer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _performServerCheckIn() async {
-    try {
-      final deviceHash = await DeviceHashUtil.getDeviceHash();
-      final channel = const MethodChannel(_channelName);
-      String imei = "Not Found";
-      Map<String, dynamic> metadata = {};
-      
-      try {
-        final info = await channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
-        if (info != null) {
-          if (info.containsKey('imei')) imei = info['imei'] as String;
-          metadata = {
-            'model': info['deviceModel']?.toString() ?? 'Unknown',
-            'manufacturer': info['manufacturer']?.toString() ?? 'Unknown',
-            'android_version': info['androidVersion'] ?? 0,
-          };
-        }
-      } catch (_) {}
-
-      final prefs = await SharedPreferences.getInstance();
-      final isLocked = prefs.getBool(_keyDeviceLocked) ?? false;
-      final lastVerifiedMs = prefs.getInt(_keyLastVerified);
-      int daysRemaining = widget.daysRemaining;
-      
-      if (lastVerifiedMs != null) {
-        final lastVerified = DateTime.fromMillisecondsSinceEpoch(lastVerifiedMs);
-        final daysSince = DateTime.now().difference(lastVerified).inDays;
-        daysRemaining = (_lockAfterDays - daysSince).clamp(0, _lockAfterDays);
-      }
-
-      final response = await http.post(
-        Uri.parse('$_serverBaseUrl/checkin'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'device_hash': deviceHash,
-          'imei': imei,
-          'is_locked': isLocked,
-          'days_remaining': daysRemaining,
-          'metadata': metadata,
-        }),
-      ).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final rawAction = data['action'] as String? ?? 'none';
-        final action = rawAction.toLowerCase();
-        
-        debugPrint('Server check-in response: action=$action');
-        
-        // Handle server commands
-        switch (action) {
-          case 'lock':
-            await channel.invokeMethod('startDeviceLock');
-            await prefs.setBool(_keyDeviceLocked, true);
-            if (mounted) {
-              // Navigate to lock screen will happen automatically on next build
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Device locked by server'),
-                  backgroundColor: FonexColors.red,
-                ),
-              );
-            }
-            break;
-          case 'unlock':
-            await channel.invokeMethod('stopDeviceLock');
-            await prefs.setBool(_keyDeviceLocked, false);
-            await prefs.setInt(_keyLastVerified, DateTime.now().millisecondsSinceEpoch);
-            break;
-          case 'extend':
-          case 'extend_days':
-            final days = data['days'] as int? ?? _lockAfterDays;
-            await prefs.setInt(
-              _keyLastVerified,
-              DateTime.now().subtract(Duration(days: _lockAfterDays - days)).millisecondsSinceEpoch,
-            );
-            if (mounted) setState(() {});
-            break;
-          case 'paid_in_full':
-          case 'mark_paid_in_full':
-            await prefs.setBool('is_paid_in_full', true);
-            await channel.invokeMethod('stopDeviceLock');
-            await channel.invokeMethod('clearDeviceOwner');
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Device marked as paid in full'),
-                  backgroundColor: FonexColors.green,
-                ),
-              );
-            }
-            break;
-        }
-      }
-    } catch (e) {
-      debugPrint('Periodic server check-in failed: $e');
-    }
-  }
-
   Widget _buildHeroStatus() {
     final isHealthy = widget.isDeviceOwner && widget.daysRemaining > 0;
     return GlassCard(
@@ -1449,9 +1531,9 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
     final statusColor = widget.isServerConnected
         ? FonexColors.green
         : widget.isConnecting
-            ? FonexColors.orange
-            : FonexColors.red;
-    
+        ? FonexColors.orange
+        : FonexColors.red;
+
     String lastSyncText = 'Never';
     if (widget.lastServerSync != null) {
       final diff = DateTime.now().difference(widget.lastServerSync!);
@@ -1544,8 +1626,8 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
     final urgentColor = widget.daysRemaining <= 7
         ? FonexColors.red
         : widget.daysRemaining <= 14
-            ? FonexColors.orange
-            : FonexColors.accent;
+        ? FonexColors.orange
+        : FonexColors.accent;
 
     return GlassCard(
       padding: const EdgeInsets.all(20),
@@ -1566,8 +1648,10 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
               ),
               const Spacer(),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
                   color: urgentColor.withValues(alpha: 0.12),
@@ -1677,7 +1761,10 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                             children: [
                               ShaderMask(
                                 shaderCallback: (b) => const LinearGradient(
-                                  colors: [FonexColors.accentLight, FonexColors.purple],
+                                  colors: [
+                                    FonexColors.accentLight,
+                                    FonexColors.purple,
+                                  ],
                                 ).createShader(b),
                                 child: Text(
                                   'FONEX',
@@ -1701,14 +1788,22 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.info_outline_rounded, color: FonexColors.textSecondary),
+                          icon: const Icon(
+                            Icons.info_outline_rounded,
+                            color: FonexColors.textSecondary,
+                          ),
                           onPressed: () => Navigator.push(
                             context,
-                            MaterialPageRoute(builder: (_) => DeviceInfoScreen()),
+                            MaterialPageRoute(
+                              builder: (_) => DeviceInfoScreen(),
+                            ),
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.settings_rounded, color: FonexColors.textSecondary),
+                          icon: const Icon(
+                            Icons.settings_rounded,
+                            color: FonexColors.textSecondary,
+                          ),
                           onPressed: () => Navigator.push(
                             context,
                             MaterialPageRoute(builder: (_) => SettingsScreen()),
@@ -1730,7 +1825,11 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                           child: GestureDetector(
                             onTap: () => Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (_) => PaymentScheduleScreen(daysRemaining: widget.daysRemaining)),
+                              MaterialPageRoute(
+                                builder: (_) => PaymentScheduleScreen(
+                                  daysRemaining: widget.daysRemaining,
+                                ),
+                              ),
                             ),
                             child: _buildMiniCard(
                               icon: Icons.calendar_today_rounded,
@@ -1744,7 +1843,9 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                           child: GestureDetector(
                             onTap: () => Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (_) => DeviceInfoScreen()),
+                              MaterialPageRoute(
+                                builder: (_) => DeviceInfoScreen(),
+                              ),
                             ),
                             child: _buildMiniCard(
                               icon: Icons.phone_android_rounded,
@@ -1757,8 +1858,12 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                         Expanded(
                           child: _buildMiniCard(
                             icon: Icons.payment_rounded,
-                            color: widget.isDeviceOwner ? FonexColors.green : FonexColors.orange,
-                            label: widget.isDeviceOwner ? 'EMI\nActive' : 'Setup\nRequired',
+                            color: widget.isDeviceOwner
+                                ? FonexColors.green
+                                : FonexColors.orange,
+                            label: widget.isDeviceOwner
+                                ? 'EMI\nActive'
+                                : 'Setup\nRequired',
                           ),
                         ),
                       ],
@@ -1778,10 +1883,16 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                               width: 50,
                               height: 50,
                               decoration: BoxDecoration(
-                                color: FonexColors.accent.withValues(alpha: 0.15),
+                                color: FonexColors.accent.withValues(
+                                  alpha: 0.15,
+                                ),
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              child: const Icon(Icons.qr_code_rounded, color: FonexColors.accent, size: 28),
+                              child: const Icon(
+                                Icons.qr_code_rounded,
+                                color: FonexColors.accent,
+                                size: 28,
+                              ),
                             ),
                             const SizedBox(width: 16),
                             Expanded(
@@ -1807,7 +1918,10 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                                 ],
                               ),
                             ),
-                            const Icon(Icons.chevron_right_rounded, color: FonexColors.textMuted),
+                            const Icon(
+                              Icons.chevron_right_rounded,
+                              color: FonexColors.textMuted,
+                            ),
                           ],
                         ),
                       ),
@@ -1848,9 +1962,10 @@ class _SplashScreenState extends State<SplashScreen>
       duration: const Duration(milliseconds: 1500),
     )..forward();
     _fadeIn = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
-    _scaleUp = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
-    );
+    _scaleUp = Tween<double>(
+      begin: 0.8,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
   }
 
   @override
@@ -1929,7 +2044,7 @@ class LockScreen extends StatefulWidget {
   final String storeName;
   final String supportPhone1;
   final String supportPhone2;
-  
+
   const LockScreen({
     super.key,
     required this.onUnlocked,
@@ -1942,8 +2057,7 @@ class LockScreen extends StatefulWidget {
   State<LockScreen> createState() => _LockScreenState();
 }
 
-class _LockScreenState extends State<LockScreen>
-    with TickerProviderStateMixin {
+class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
   late AnimationController _pulseController;
   late AnimationController _entryController;
   late Animation<double> _pulse;
@@ -1971,11 +2085,10 @@ class _LockScreenState extends State<LockScreen>
       duration: const Duration(milliseconds: 1200),
     )..forward();
     _fadeIn = CurvedAnimation(parent: _entryController, curve: Curves.easeOut);
-    _slideUp = Tween<Offset>(
-      begin: const Offset(0, 0.1),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(
-        parent: _entryController, curve: Curves.easeOutCubic));
+    _slideUp = Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero)
+        .animate(
+          CurvedAnimation(parent: _entryController, curve: Curves.easeOutCubic),
+        );
 
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
@@ -2008,8 +2121,10 @@ class _LockScreenState extends State<LockScreen>
   void _showPinScreen() {
     Navigator.of(context).push(
       PageRouteBuilder(
-        pageBuilder: (_, __, ___) =>
-            OwnerPinScreen(onUnlocked: widget.onUnlocked, deviceHash: _deviceHash),
+        pageBuilder: (_, __, ___) => OwnerPinScreen(
+          onUnlocked: widget.onUnlocked,
+          deviceHash: _deviceHash,
+        ),
         transitionsBuilder: (_, a, __, child) {
           return FadeTransition(
             opacity: a,
@@ -2092,8 +2207,9 @@ class _LockScreenState extends State<LockScreen>
                                       ),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: FonexColors.red
-                                              .withValues(alpha: 0.4),
+                                          color: FonexColors.red.withValues(
+                                            alpha: 0.4,
+                                          ),
                                           blurRadius: 30,
                                           spreadRadius: 4,
                                         ),
@@ -2118,7 +2234,7 @@ class _LockScreenState extends State<LockScreen>
                               shaderCallback: (b) => const LinearGradient(
                                 colors: [
                                   FonexColors.accentLight,
-                                  FonexColors.purple
+                                  FonexColors.purple,
                                 ],
                               ).createShader(b),
                               child: Text(
@@ -2145,10 +2261,13 @@ class _LockScreenState extends State<LockScreen>
 
                             // Lock message card
                             GlassCard(
-                              borderColor:
-                                  FonexColors.red.withValues(alpha: 0.25),
+                              borderColor: FonexColors.red.withValues(
+                                alpha: 0.25,
+                              ),
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 24, vertical: 24),
+                                horizontal: 24,
+                                vertical: 24,
+                              ),
                               child: Column(
                                 children: [
                                   Container(
@@ -2156,8 +2275,9 @@ class _LockScreenState extends State<LockScreen>
                                     height: 44,
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
-                                      color: FonexColors.orange
-                                          .withValues(alpha: 0.15),
+                                      color: FonexColors.orange.withValues(
+                                        alpha: 0.15,
+                                      ),
                                     ),
                                     child: const Icon(
                                       Icons.warning_amber_rounded,
@@ -2194,7 +2314,9 @@ class _LockScreenState extends State<LockScreen>
                             // Contact card
                             GlassCard(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 20, vertical: 16),
+                                horizontal: 20,
+                                vertical: 16,
+                              ),
                               borderRadius: 14,
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -2204,8 +2326,9 @@ class _LockScreenState extends State<LockScreen>
                                     height: 40,
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
-                                      color: FonexColors.cyan
-                                          .withValues(alpha: 0.12),
+                                      color: FonexColors.cyan.withValues(
+                                        alpha: 0.12,
+                                      ),
                                     ),
                                     child: const Icon(
                                       Icons.store_rounded,
@@ -2244,22 +2367,28 @@ class _LockScreenState extends State<LockScreen>
 
                             // Device Hash Display
                             GlassCard(
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 12,
+                              ),
                               borderRadius: 14,
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   Text(
                                     'Device ID  ',
-                                    style: GoogleFonts.inter(fontSize: 12, color: FonexColors.textSecondary),
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      color: FonexColors.textSecondary,
+                                    ),
                                   ),
                                   Text(
                                     _deviceHash,
                                     style: GoogleFonts.inter(
-                                      fontSize: 18, 
-                                      fontWeight: FontWeight.w800, 
-                                      color: FonexColors.textPrimary, 
-                                      letterSpacing: 4
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w800,
+                                      color: FonexColors.textPrimary,
+                                      letterSpacing: 4,
                                     ),
                                   ),
                                 ],
@@ -2270,16 +2399,24 @@ class _LockScreenState extends State<LockScreen>
 
                             // Emergency Call Buttons
                             GlassCard(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                              borderColor: FonexColors.green.withValues(alpha: 0.3),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 16,
+                              ),
+                              borderColor: FonexColors.green.withValues(
+                                alpha: 0.3,
+                              ),
                               borderRadius: 18,
                               child: Column(
                                 children: [
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      const Icon(Icons.phone_in_talk_rounded,
-                                          color: FonexColors.green, size: 16),
+                                      const Icon(
+                                        Icons.phone_in_talk_rounded,
+                                        color: FonexColors.green,
+                                        size: 16,
+                                      ),
                                       const SizedBox(width: 8),
                                       Text(
                                         'Need Help? Call ${widget.storeName}',
@@ -2297,14 +2434,16 @@ class _LockScreenState extends State<LockScreen>
                                       Expanded(
                                         child: _CallButton(
                                           number: widget.supportPhone1,
-                                          label: widget.supportPhone1.replaceAll('+91', '+91 '),
+                                          label: widget.supportPhone1
+                                              .replaceAll('+91', '+91 '),
                                         ),
                                       ),
                                       const SizedBox(width: 10),
                                       Expanded(
                                         child: _CallButton(
                                           number: widget.supportPhone2,
-                                          label: widget.supportPhone2.replaceAll('+91', '+91 '),
+                                          label: widget.supportPhone2
+                                              .replaceAll('+91', '+91 '),
                                         ),
                                       ),
                                     ],
@@ -2313,14 +2452,19 @@ class _LockScreenState extends State<LockScreen>
                                   Container(
                                     padding: const EdgeInsets.all(12),
                                     decoration: BoxDecoration(
-                                      color: FonexColors.orange.withValues(alpha: 0.1),
+                                      color: FonexColors.orange.withValues(
+                                        alpha: 0.1,
+                                      ),
                                       borderRadius: BorderRadius.circular(10),
                                       border: Border.all(
-                                        color: FonexColors.orange.withValues(alpha: 0.3),
+                                        color: FonexColors.orange.withValues(
+                                          alpha: 0.3,
+                                        ),
                                       ),
                                     ),
                                     child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
                                       children: [
                                         const Icon(
                                           Icons.info_outline_rounded,
@@ -2358,8 +2502,9 @@ class _LockScreenState extends State<LockScreen>
                                   'FONEX v1.0.0',
                                   style: GoogleFonts.inter(
                                     fontSize: 11,
-                                    color: FonexColors.textMuted
-                                        .withValues(alpha: 0.4),
+                                    color: FonexColors.textMuted.withValues(
+                                      alpha: 0.4,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -2422,8 +2567,7 @@ class _CallButton extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.phone_rounded,
-                color: FonexColors.green, size: 16),
+            const Icon(Icons.phone_rounded, color: FonexColors.green, size: 16),
             const SizedBox(width: 6),
             Flexible(
               child: Text(
@@ -2450,9 +2594,9 @@ class OwnerPinScreen extends StatefulWidget {
   final VoidCallback onUnlocked;
   final String deviceHash;
   const OwnerPinScreen({
-    super.key, 
-    required this.onUnlocked, 
-    required this.deviceHash
+    super.key,
+    required this.onUnlocked,
+    required this.deviceHash,
   });
 
   @override
@@ -2542,7 +2686,9 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
       _errorMessage = null;
     });
     try {
-      final expectedAlgorithmicPin = DeviceHashUtil.getExpectedPin(widget.deviceHash);
+      final expectedAlgorithmicPin = DeviceHashUtil.getExpectedPin(
+        widget.deviceHash,
+      );
       bool isValid = false;
 
       // 1. Check algorithmic PIN (offline)
@@ -2550,24 +2696,25 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
         isValid = true;
       } else {
         // 2. Check native stored PIN (offline fallback)
-        isValid = await _channel.invokeMethod<bool>(
-          'validatePin',
-          {'pin': pin},
-        ) ?? false;
+        isValid =
+            await _channel.invokeMethod<bool>('validatePin', {'pin': pin}) ??
+            false;
       }
 
       // 3. If local checks fail, try server-side unlock
       if (!isValid) {
         setState(() => _errorMessage = 'Verifying with server...');
         try {
-          final response = await http.post(
-            Uri.parse('$_serverBaseUrl/unlock'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'device_hash': widget.deviceHash,
-              'pin': pin,
-            }),
-          ).timeout(const Duration(seconds: 8));
+          final response = await http
+              .post(
+                Uri.parse('$_serverBaseUrl/unlock'),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode({
+                  'device_hash': widget.deviceHash,
+                  'pin': pin,
+                }),
+              )
+              .timeout(const Duration(seconds: 8));
 
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -2622,12 +2769,17 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                     // App bar
                     Padding(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 8),
+                        horizontal: 8,
+                        vertical: 8,
+                      ),
                       child: Row(
                         children: [
                           IconButton(
-                            icon: const Icon(Icons.arrow_back_ios_rounded,
-                                color: FonexColors.textSecondary, size: 20),
+                            icon: const Icon(
+                              Icons.arrow_back_ios_rounded,
+                              color: FonexColors.textSecondary,
+                              size: 20,
+                            ),
                             onPressed: () => Navigator.of(context).pop(),
                           ),
                           const Spacer(),
@@ -2698,10 +2850,12 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                                   children: List.generate(6, (i) {
                                     final isFilled = i < _currentPin.length;
                                     return AnimatedContainer(
-                                      duration:
-                                          const Duration(milliseconds: 200),
+                                      duration: const Duration(
+                                        milliseconds: 200,
+                                      ),
                                       margin: const EdgeInsets.symmetric(
-                                          horizontal: 8),
+                                        horizontal: 8,
+                                      ),
                                       width: isFilled ? 16 : 14,
                                       height: isFilled ? 16 : 14,
                                       decoration: BoxDecoration(
@@ -2773,7 +2927,8 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                                         color: FonexColors.textMuted,
                                       ),
                                       onPressed: () => setState(
-                                          () => _obscurePin = !_obscurePin),
+                                        () => _obscurePin = !_obscurePin,
+                                      ),
                                     ),
                                   ),
                                   onSubmitted: (_) => _validatePin(),
@@ -2788,7 +2943,9 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                                         padding: const EdgeInsets.only(top: 14),
                                         child: GlassCard(
                                           padding: const EdgeInsets.symmetric(
-                                              horizontal: 16, vertical: 10),
+                                            horizontal: 16,
+                                            vertical: 10,
+                                          ),
                                           borderColor: FonexColors.red
                                               .withValues(alpha: 0.3),
                                           borderRadius: 10,
@@ -2796,10 +2953,10 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
                                               const Icon(
-                                                  Icons
-                                                      .error_outline_rounded,
-                                                  color: FonexColors.red,
-                                                  size: 16),
+                                                Icons.error_outline_rounded,
+                                                color: FonexColors.red,
+                                                size: 16,
+                                              ),
                                               const SizedBox(width: 8),
                                               Flexible(
                                                 child: Text(
@@ -2859,8 +3016,7 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                                       shadowColor: Colors.transparent,
                                       foregroundColor: Colors.white,
                                       shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(16),
+                                        borderRadius: BorderRadius.circular(16),
                                       ),
                                     ),
                                     child: _isValidating
@@ -2905,8 +3061,9 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                                 'Default PIN: 1234',
                                 style: GoogleFonts.inter(
                                   fontSize: 11,
-                                  color: FonexColors.textMuted
-                                      .withValues(alpha: 0.5),
+                                  color: FonexColors.textMuted.withValues(
+                                    alpha: 0.5,
+                                  ),
                                 ),
                               ),
                             ],
@@ -2950,7 +3107,9 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
   Future<void> _loadDeviceInfo() async {
     try {
       final hash = await DeviceHashUtil.getDeviceHash();
-      final info = await _channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+      final info = await _channel.invokeMapMethod<String, dynamic>(
+        'getDeviceInfo',
+      );
       if (mounted) {
         setState(() {
           _deviceHash = hash;
@@ -2968,7 +3127,10 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Device Information', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        title: Text(
+          'Device Information',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+        ),
         backgroundColor: FonexColors.surface,
         elevation: 0,
       ),
@@ -3007,14 +3169,40 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    _buildInfoRow('IMEI', _deviceInfo?['imei']?.toString() ?? 'Not Available'),
-                    _buildInfoRow('Model', _deviceInfo?['deviceModel']?.toString() ?? 'Unknown'),
-                    _buildInfoRow('Manufacturer', _deviceInfo?['manufacturer']?.toString() ?? 'Unknown'),
-                    _buildInfoRow('Android Version', 'Android ${_deviceInfo?['androidVersion'] ?? 'Unknown'}'),
-                    _buildInfoRow('Device Owner', _deviceInfo?['isDeviceOwner'] == true ? 'Active' : 'Not Active', 
-                        _deviceInfo?['isDeviceOwner'] == true ? FonexColors.green : FonexColors.red),
-                    _buildInfoRow('Lock Status', _deviceInfo?['isDeviceLocked'] == true ? 'Locked' : 'Unlocked',
-                        _deviceInfo?['isDeviceLocked'] == true ? FonexColors.red : FonexColors.green),
+                    _buildInfoRow(
+                      'IMEI',
+                      _deviceInfo?['imei']?.toString() ?? 'Not Available',
+                    ),
+                    _buildInfoRow(
+                      'Model',
+                      _deviceInfo?['deviceModel']?.toString() ?? 'Unknown',
+                    ),
+                    _buildInfoRow(
+                      'Manufacturer',
+                      _deviceInfo?['manufacturer']?.toString() ?? 'Unknown',
+                    ),
+                    _buildInfoRow(
+                      'Android Version',
+                      'Android ${_deviceInfo?['androidVersion'] ?? 'Unknown'}',
+                    ),
+                    _buildInfoRow(
+                      'Device Owner',
+                      _deviceInfo?['isDeviceOwner'] == true
+                          ? 'Active'
+                          : 'Not Active',
+                      _deviceInfo?['isDeviceOwner'] == true
+                          ? FonexColors.green
+                          : FonexColors.red,
+                    ),
+                    _buildInfoRow(
+                      'Lock Status',
+                      _deviceInfo?['isDeviceLocked'] == true
+                          ? 'Locked'
+                          : 'Unlocked',
+                      _deviceInfo?['isDeviceLocked'] == true
+                          ? FonexColors.red
+                          : FonexColors.green,
+                    ),
                     const SizedBox(height: 20),
                     GlassCard(
                       padding: const EdgeInsets.all(20),
@@ -3023,7 +3211,11 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
                         children: [
                           Row(
                             children: [
-                              const Icon(Icons.info_outline_rounded, color: FonexColors.accent, size: 20),
+                              const Icon(
+                                Icons.info_outline_rounded,
+                                color: FonexColors.accent,
+                                size: 20,
+                              ),
                               const SizedBox(width: 10),
                               Text(
                                 'About This Device',
@@ -3095,7 +3287,10 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Settings', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        title: Text(
+          'Settings',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+        ),
         backgroundColor: FonexColors.surface,
         elevation: 0,
       ),
@@ -3218,7 +3413,10 @@ class SettingsScreen extends StatelessWidget {
                 )
               : null,
           trailing: onTap != null
-              ? const Icon(Icons.chevron_right_rounded, color: FonexColors.textMuted)
+              ? const Icon(
+                  Icons.chevron_right_rounded,
+                  color: FonexColors.textMuted,
+                )
               : null,
           onTap: onTap,
         ),
@@ -3232,15 +3430,15 @@ class SettingsScreen extends StatelessWidget {
 // =============================================================================
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
-  
+
   // Facebook profile photo URL
   // Option 1: Get direct image URL - Visit https://www.facebook.com/share/1JNRaFRMqc/
   //          Right-click profile photo > Copy image address, then paste below
-  // Option 2: Use Facebook Graph API (requires username): 
+  // Option 2: Use Facebook Graph API (requires username):
   //          https://graph.facebook.com/{username}/picture?type=large
   // Option 3: Leave empty to show initials placeholder
   static const String _facebookProfilePhotoUrl = '';
-  
+
   // Alternative: Try to construct from share link (update if needed)
   // For share link: https://www.facebook.com/share/1JNRaFRMqc/
   // You can also use: https://graph.facebook.com/v18.0/{user-id}/picture?type=large
@@ -3249,7 +3447,10 @@ class AboutScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('About', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        title: Text(
+          'About',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+        ),
         backgroundColor: FonexColors.surface,
         elevation: 0,
       ),
@@ -3357,9 +3558,14 @@ class AboutScreen extends StatelessWidget {
                     const SizedBox(height: 12),
                     InkWell(
                       onTap: () async {
-                        final uri = Uri.parse('https://www.facebook.com/share/1JNRaFRMqc/');
+                        final uri = Uri.parse(
+                          'https://www.facebook.com/share/1JNRaFRMqc/',
+                        );
                         if (await canLaunchUrl(uri)) {
-                          await launchUrl(uri, mode: LaunchMode.externalApplication);
+                          await launchUrl(
+                            uri,
+                            mode: LaunchMode.externalApplication,
+                          );
                         }
                       },
                       borderRadius: BorderRadius.circular(12),
@@ -3382,12 +3588,16 @@ class AboutScreen extends StatelessWidget {
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 border: Border.all(
-                                  color: FonexColors.accent.withValues(alpha: 0.3),
+                                  color: FonexColors.accent.withValues(
+                                    alpha: 0.3,
+                                  ),
                                   width: 2,
                                 ),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: FonexColors.accent.withValues(alpha: 0.2),
+                                    color: FonexColors.accent.withValues(
+                                      alpha: 0.2,
+                                    ),
                                     blurRadius: 8,
                                     spreadRadius: 1,
                                   ),
@@ -3401,10 +3611,12 @@ class AboutScreen extends StatelessWidget {
                                         height: 64,
                                         fit: BoxFit.cover,
                                         headers: const {
-                                          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                                          'User-Agent':
+                                              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                                         },
                                         loadingBuilder: (context, child, loadingProgress) {
-                                          if (loadingProgress == null) return child;
+                                          if (loadingProgress == null)
+                                            return child;
                                           return Container(
                                             width: 64,
                                             height: 64,
@@ -3418,9 +3630,14 @@ class AboutScreen extends StatelessWidget {
                                                 height: 24,
                                                 child: CircularProgressIndicator(
                                                   strokeWidth: 2.5,
-                                                  value: loadingProgress.expectedTotalBytes != null
-                                                      ? loadingProgress.cumulativeBytesLoaded /
-                                                          loadingProgress.expectedTotalBytes!
+                                                  value:
+                                                      loadingProgress
+                                                              .expectedTotalBytes !=
+                                                          null
+                                                      ? loadingProgress
+                                                                .cumulativeBytesLoaded /
+                                                            loadingProgress
+                                                                .expectedTotalBytes!
                                                       : null,
                                                   color: FonexColors.accent,
                                                 ),
@@ -3428,7 +3645,8 @@ class AboutScreen extends StatelessWidget {
                                             ),
                                           );
                                         },
-                                        errorBuilder: (_, __, ___) => _buildProfilePlaceholder(),
+                                        errorBuilder: (_, __, ___) =>
+                                            _buildProfilePlaceholder(),
                                       )
                                     : _buildProfilePlaceholder(),
                               ),
@@ -3455,8 +3673,12 @@ class AboutScreen extends StatelessWidget {
                                           vertical: 4,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: FonexColors.accent.withValues(alpha: 0.15),
-                                          borderRadius: BorderRadius.circular(6),
+                                          color: FonexColors.accent.withValues(
+                                            alpha: 0.15,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
                                         ),
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
@@ -3493,10 +3715,7 @@ class AboutScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    Container(
-                      height: 1,
-                      color: FonexColors.cardBorder,
-                    ),
+                    Container(height: 1, color: FonexColors.cardBorder),
                     const SizedBox(height: 16),
                     Row(
                       children: [
@@ -3553,10 +3772,7 @@ class AboutScreen extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            FonexColors.accent,
-            FonexColors.purple,
-          ],
+          colors: [FonexColors.accent, FonexColors.purple],
         ),
       ),
       child: Center(
@@ -3578,7 +3794,7 @@ class AboutScreen extends StatelessWidget {
 // =============================================================================
 class PaymentScheduleScreen extends StatelessWidget {
   final int daysRemaining;
-  
+
   const PaymentScheduleScreen({super.key, required this.daysRemaining});
 
   @override
@@ -3587,12 +3803,15 @@ class PaymentScheduleScreen extends StatelessWidget {
     final urgentColor = daysRemaining <= 7
         ? FonexColors.red
         : daysRemaining <= 14
-            ? FonexColors.orange
-            : FonexColors.green;
+        ? FonexColors.orange
+        : FonexColors.green;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Payment Schedule', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        title: Text(
+          'Payment Schedule',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+        ),
         backgroundColor: FonexColors.surface,
         elevation: 0,
       ),
@@ -3660,8 +3879,11 @@ class PaymentScheduleScreen extends StatelessWidget {
                     const Divider(color: FonexColors.cardBorder),
                     _buildInfoRow('Payment Period', '${_lockAfterDays} days'),
                     const Divider(color: FonexColors.cardBorder),
-                    _buildInfoRow('Status', daysRemaining > 0 ? 'Active' : 'Locked',
-                        daysRemaining > 0 ? FonexColors.green : FonexColors.red),
+                    _buildInfoRow(
+                      'Status',
+                      daysRemaining > 0 ? 'Active' : 'Locked',
+                      daysRemaining > 0 ? FonexColors.green : FonexColors.red,
+                    ),
                   ],
                 ),
               ),
@@ -3671,7 +3893,10 @@ class PaymentScheduleScreen extends StatelessWidget {
                 borderColor: FonexColors.orange.withValues(alpha: 0.3),
                 child: Row(
                   children: [
-                    const Icon(Icons.warning_amber_rounded, color: FonexColors.orange),
+                    const Icon(
+                      Icons.warning_amber_rounded,
+                      color: FonexColors.orange,
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -3748,9 +3973,11 @@ class _QRCodeScreenState extends State<QRCodeScreen> {
     try {
       final hash = await DeviceHashUtil.getDeviceHash();
       final channel = const MethodChannel(_channelName);
-      final info = await channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+      final info = await channel.invokeMapMethod<String, dynamic>(
+        'getDeviceInfo',
+      );
       final imei = info?['imei']?.toString() ?? 'N/A';
-      
+
       if (mounted) {
         setState(() {
           _deviceHash = hash;
@@ -3766,7 +3993,10 @@ class _QRCodeScreenState extends State<QRCodeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Device QR Code', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        title: Text(
+          'Device QR Code',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+        ),
         backgroundColor: FonexColors.surface,
         elevation: 0,
       ),
@@ -3788,13 +4018,20 @@ class _QRCodeScreenState extends State<QRCodeScreen> {
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: FonexColors.cardBorder, width: 2),
+                          border: Border.all(
+                            color: FonexColors.cardBorder,
+                            width: 2,
+                          ),
                         ),
                         child: Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(Icons.qr_code_2_rounded, size: 120, color: Colors.black),
+                              const Icon(
+                                Icons.qr_code_2_rounded,
+                                size: 120,
+                                color: Colors.black,
+                              ),
                               const SizedBox(height: 8),
                               Text(
                                 _deviceHash,
@@ -3851,7 +4088,11 @@ class _QRCodeScreenState extends State<QRCodeScreen> {
                   padding: const EdgeInsets.all(20),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline_rounded, color: FonexColors.accent, size: 20),
+                      const Icon(
+                        Icons.info_outline_rounded,
+                        color: FonexColors.accent,
+                        size: 20,
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
