@@ -1,5 +1,6 @@
 package com.roycommunication.fonex
 
+import android.app.WallpaperManager
 import android.os.Bundle
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -17,11 +18,22 @@ import android.os.Build
 import android.telephony.TelephonyManager
 import android.os.PowerManager
 import android.provider.Settings
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
+import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * MainActivity — Flutter host activity with MethodChannel bridge.
@@ -35,6 +47,10 @@ class MainActivity : FlutterActivity() {
         private const val ENCRYPTED_PREFS_NAME = "fonex_secure_prefs"
         private const val KEY_OWNER_PIN = "owner_pin"
         private const val DEFAULT_PIN = "1234"
+        private const val ORIGINAL_WALLPAPER_FILE = "original_system_wallpaper.png"
+        private const val SUPPORT_STORE_NAME = "Roy Communication"
+        private const val SUPPORT_PHONE_1 = "+91 8388855549"
+        private const val SUPPORT_PHONE_2 = "+91 9635252455"
     }
 
     private lateinit var deviceLockManager: DeviceLockManager
@@ -58,6 +74,7 @@ class MainActivity : FlutterActivity() {
         if (deviceLockManager.isDeviceLocked() && deviceLockManager.isDeviceOwner()) {
             Log.i(TAG, "Device locked state detected — re-engaging lock")
             deviceLockManager.enableDeviceLock(this)
+            applyWarningSystemWallpaper(refreshBackup = false)
         }
     }
     
@@ -107,12 +124,16 @@ class MainActivity : FlutterActivity() {
 
                 "startDeviceLock" -> {
                     val success = deviceLockManager.enableDeviceLock(this)
+                    if (success) {
+                        applyWarningSystemWallpaper(refreshBackup = true)
+                    }
                     result.success(success)
                 }
 
                 "stopDeviceLock" -> {
                     val success = deviceLockManager.disableDeviceLock(this)
                     if (success) {
+                        restoreOriginalSystemWallpaper()
                         releaseWakeLock() // Release wake lock when device is unlocked
                     }
                     result.success(success)
@@ -206,7 +227,7 @@ class MainActivity : FlutterActivity() {
                     android.widget.Toast.makeText(
                         this,
                         "⛔ Cannot reset this device — Please complete your EMI payment first. " +
-                        "Contact Roy Communication: +91 8388855549",
+                        "Contact $SUPPORT_STORE_NAME: $SUPPORT_PHONE_1, $SUPPORT_PHONE_2",
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                     result.success(true)
@@ -228,6 +249,7 @@ class MainActivity : FlutterActivity() {
                     if (paid) {
                         // Remove restrictions when paid - allow factory reset and uninstall
                         deviceLockManager.disableDeviceLock(this)
+                        restoreOriginalSystemWallpaper()
                         deviceLockManager.enforceFactoryResetBlock() // This will remove the restriction
                     } else {
                         // Re-enforce restrictions if payment status changes
@@ -289,6 +311,175 @@ class MainActivity : FlutterActivity() {
             "attempted_recovery" to attemptedRecovery,
             "connected_now" to isNetworkConnected()
         )
+    }
+
+    private fun applyWarningSystemWallpaper(refreshBackup: Boolean) {
+        try {
+            ensureOriginalWallpaperBackup(forceRefresh = refreshBackup)
+            val base = loadOriginalWallpaperBitmap() ?: loadCurrentWallpaperBitmap() ?: run {
+                Log.w(TAG, "Skipping warning wallpaper: no base wallpaper available")
+                return
+            }
+            val warningBitmap = drawWarningBanner(base)
+            setSystemWallpaper(warningBitmap)
+            Log.i(TAG, "Warning system wallpaper applied")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to apply warning wallpaper: ${e.message}", e)
+        }
+    }
+
+    private fun restoreOriginalSystemWallpaper() {
+        try {
+            val original = loadOriginalWallpaperBitmap() ?: run {
+                Log.i(TAG, "No original wallpaper backup found; skipping restore")
+                return
+            }
+            setSystemWallpaper(original)
+            Log.i(TAG, "Original system wallpaper restored")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore original wallpaper: ${e.message}", e)
+        }
+    }
+
+    private fun ensureOriginalWallpaperBackup(forceRefresh: Boolean) {
+        val backupFile = File(filesDir, ORIGINAL_WALLPAPER_FILE)
+        if (backupFile.exists() && !forceRefresh) return
+
+        val current = loadCurrentWallpaperBitmap() ?: return
+        try {
+            FileOutputStream(backupFile).use { out ->
+                current.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            Log.i(TAG, "Original wallpaper backup created")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create wallpaper backup: ${e.message}", e)
+        }
+    }
+
+    private fun loadCurrentWallpaperBitmap(): Bitmap? {
+        return try {
+            val drawable = WallpaperManager.getInstance(applicationContext).drawable ?: return null
+            when (drawable) {
+                is BitmapDrawable -> drawable.bitmap.copy(Bitmap.Config.ARGB_8888, true)
+                else -> {
+                    val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 1080
+                    val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 1920
+                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    drawable.setBounds(0, 0, canvas.width, canvas.height)
+                    drawable.draw(canvas)
+                    bitmap
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to read current wallpaper: ${e.message}")
+            null
+        }
+    }
+
+    private fun loadOriginalWallpaperBitmap(): Bitmap? {
+        val backupFile = File(filesDir, ORIGINAL_WALLPAPER_FILE)
+        if (!backupFile.exists()) return null
+        return BitmapFactory.decodeFile(backupFile.absolutePath)
+    }
+
+    private fun drawWarningBanner(base: Bitmap): Bitmap {
+        val bitmap = base.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(bitmap)
+
+        val width = bitmap.width.toFloat()
+        val height = bitmap.height.toFloat()
+        val bannerHeight = (height * 0.4f).coerceAtLeast(420f)
+        val top = height - bannerHeight
+
+        val bannerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = LinearGradient(
+                0f,
+                top,
+                0f,
+                height,
+                intArrayOf(
+                    Color.argb(220, 120, 0, 0),
+                    Color.argb(235, 185, 22, 22)
+                ),
+                null,
+                Shader.TileMode.CLAMP
+            )
+        }
+        canvas.drawRect(0f, top, width, height, bannerPaint)
+
+        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = (width * 0.046f).coerceAtMost(48f)
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+            setShadowLayer(6f, 0f, 2f, Color.argb(120, 0, 0, 0))
+        }
+        val subtitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(245, 255, 240, 240)
+            textSize = (width * 0.028f).coerceAtMost(30f)
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+        }
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = (width * 0.056f).coerceAtMost(66f)
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+            setShadowLayer(8f, 0f, 2f, Color.argb(120, 0, 0, 0))
+        }
+        val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(245, 255, 240, 240)
+            textSize = (width * 0.03f).coerceAtMost(33f)
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+        }
+        val logoBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(235, 255, 255, 255)
+        }
+        val logoBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(235, 120, 0, 0)
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+        }
+        val logoTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(255, 175, 22, 22)
+            textSize = (width * 0.05f).coerceAtMost(52f)
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+        }
+
+        val padding = width * 0.06f
+        val logoRadius = (width * 0.042f).coerceIn(24f, 40f)
+        val logoCenterX = padding + logoRadius
+        val logoCenterY = top + bannerHeight * 0.16f
+        canvas.drawCircle(logoCenterX, logoCenterY, logoRadius, logoBgPaint)
+        canvas.drawCircle(logoCenterX, logoCenterY, logoRadius, logoBorderPaint)
+        val logoTextY = logoCenterY - (logoTextPaint.descent() + logoTextPaint.ascent()) / 2
+        canvas.drawText("F", logoCenterX, logoTextY, logoTextPaint)
+
+        val brandX = logoCenterX + logoRadius + 16f
+        val brandY = logoCenterY - 6f
+        canvas.drawText("FONEX", brandX, brandY, brandPaint)
+        canvas.drawText("Powered by $SUPPORT_STORE_NAME", brandX, brandY + bannerHeight * 0.09f, subtitlePaint)
+
+        var y = top + bannerHeight * 0.42f
+        canvas.drawText("EMI PAYMENT PENDING", padding, y, titlePaint)
+        y += bannerHeight * 0.14f
+        canvas.drawText("Pay EMI to unlock this device.", padding, y, linePaint)
+        y += bannerHeight * 0.13f
+        canvas.drawText("Contact support:", padding, y, linePaint)
+        y += bannerHeight * 0.12f
+        canvas.drawText("\u260E $SUPPORT_PHONE_1", padding, y, linePaint)
+        y += bannerHeight * 0.11f
+        canvas.drawText("\u260E $SUPPORT_PHONE_2", padding, y, linePaint)
+
+        return bitmap
+    }
+
+    private fun setSystemWallpaper(bitmap: Bitmap) {
+        val wallpaperManager = WallpaperManager.getInstance(applicationContext)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            wallpaperManager.setBitmap(bitmap, null, true, WallpaperManager.FLAG_SYSTEM)
+        } else {
+            wallpaperManager.setBitmap(bitmap)
+        }
     }
 
     private fun isNetworkConnected(): Boolean {

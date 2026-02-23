@@ -2611,21 +2611,36 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                                     ],
                                   ),
                                   const SizedBox(height: 12),
-                                  Row(
+                                  Text(
+                                    'Tap any number to view full number',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 11,
+                                      color: FonexColors.textMuted,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Column(
                                     children: [
-                                      Expanded(
+                                      SizedBox(
+                                        width: double.infinity,
                                         child: _CallButton(
                                           number: widget.supportPhone1,
-                                          label: widget.supportPhone1
-                                              .replaceAll('+91', '+91 '),
+                                          label: widget.supportPhone1.replaceAll(
+                                            '+91',
+                                            '+91 ',
+                                          ),
                                         ),
                                       ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
+                                      const SizedBox(height: 10),
+                                      SizedBox(
+                                        width: double.infinity,
                                         child: _CallButton(
                                           number: widget.supportPhone2,
-                                          label: widget.supportPhone2
-                                              .replaceAll('+91', '+91 '),
+                                          label: widget.supportPhone2.replaceAll(
+                                            '+91',
+                                            '+91 ',
+                                          ),
                                         ),
                                       ),
                                     ],
@@ -2753,10 +2768,123 @@ class _CallButton extends StatelessWidget {
     }
   }
 
+  String _formatPhoneNumber(String value) {
+    final clean = value.replaceAll(' ', '');
+    if (clean.startsWith('+91') && clean.length == 13) {
+      final local = clean.substring(3);
+      return '+91 ${local.substring(0, 5)} ${local.substring(5)}';
+    }
+    return value;
+  }
+
+  Future<void> _showFullNumberSheet(BuildContext context) async {
+    final fullNumber = _formatPhoneNumber(number);
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return Container(
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: FonexColors.surface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: FonexColors.cardBorder),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    'Support Number',
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: FonexColors.textPrimary,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: FonexColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: FonexColors.green.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: FonexColors.green.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.phone_rounded,
+                      color: FonexColors.green,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: SelectableText(
+                        fullNumber,
+                        style: GoogleFonts.inter(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: FonexColors.green,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.of(sheetContext).pop();
+                    await _call();
+                  },
+                  icon: const Icon(Icons.call_rounded, size: 18),
+                  label: Text(
+                    'Call Now',
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: FonexColors.green,
+                    foregroundColor: Colors.black,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: _call,
+      onTap: () => _showFullNumberSheet(context),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
         decoration: BoxDecoration(
@@ -2779,19 +2907,48 @@ class _CallButton extends StatelessWidget {
           ],
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.start,
           children: [
             const Icon(Icons.phone_rounded, color: FonexColors.green, size: 16),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                label,
-                style: GoogleFonts.inter(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: FonexColors.green,
-                ),
-                overflow: TextOverflow.ellipsis,
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: FonexColors.green,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Tap to show full number',
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: FonexColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              width: 26,
+              height: 26,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: FonexColors.green.withValues(alpha: 0.18),
+              ),
+              child: const Icon(
+                Icons.visibility_rounded,
+                color: FonexColors.green,
+                size: 14,
               ),
             ),
           ],
@@ -3451,6 +3608,64 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
                               height: 1.5,
                             ),
                           ),
+                          const SizedBox(height: 14),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: FonexColors.card.withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: FonexColors.cardBorder.withValues(
+                                  alpha: 0.7,
+                                ),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.person_rounded,
+                                      color: FonexColors.accent,
+                                      size: 16,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Software Developer: Anupam Pradhan',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          color: FonexColors.textSecondary,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.location_on_rounded,
+                                      color: FonexColors.textMuted,
+                                      size: 16,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Namkhana',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        color: FonexColors.textMuted,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -3801,8 +4016,8 @@ class AboutScreen extends StatelessWidget {
                           child: Row(
                             children: [
                               Container(
-                                width: 72,
-                                height: 72,
+                                width: 64,
+                                height: 64,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
                                   border: Border.all(
@@ -3836,14 +4051,35 @@ class AboutScreen extends StatelessWidget {
                                     ),
                                     const SizedBox(height: 6),
                                     Text(
-                                      'System Developer',
+                                      'Software Developer',
                                       style: GoogleFonts.inter(
                                         fontSize: 12,
                                         color: FonexColors.textSecondary,
                                       ),
                                     ),
+                                    const SizedBox(height: 6),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.max,
+                                      children: [
+                                        const Icon(
+                                          Icons.location_on_rounded,
+                                          size: 14,
+                                          color: FonexColors.textMuted,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          'Namkhana',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 11.5,
+                                            color: FonexColors.textMuted,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                     const SizedBox(height: 8),
                                     Container(
+                                      width: double.infinity,
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 10,
                                         vertical: 5,
@@ -3858,7 +4094,7 @@ class AboutScreen extends StatelessWidget {
                                         ),
                                       ),
                                       child: Row(
-                                        mainAxisSize: MainAxisSize.min,
+                                        mainAxisSize: MainAxisSize.max,
                                         children: [
                                           const Icon(
                                             Icons.facebook_rounded,
@@ -3866,12 +4102,16 @@ class AboutScreen extends StatelessWidget {
                                             size: 16,
                                           ),
                                           const SizedBox(width: 6),
-                                          Text(
-                                            'Open Facebook Profile',
-                                            style: GoogleFonts.inter(
-                                              fontSize: 11.5,
-                                              fontWeight: FontWeight.w700,
-                                              color: const Color(0xFF9BC5FF),
+                                          Flexible(
+                                            child: Text(
+                                              'Open Facebook Profile',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: GoogleFonts.inter(
+                                                fontSize: 11.5,
+                                                fontWeight: FontWeight.w700,
+                                                color: const Color(0xFF9BC5FF),
+                                              ),
                                             ),
                                           ),
                                         ],
@@ -3880,11 +4120,11 @@ class AboutScreen extends StatelessWidget {
                                   ],
                                 ),
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(width: 4),
                               Icon(
                                 Icons.open_in_new_rounded,
                                 color: FonexColors.textSecondary,
-                                size: 18,
+                                size: 16,
                               ),
                             ],
                           ),
