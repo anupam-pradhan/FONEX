@@ -12,7 +12,7 @@ class FonexConfig {
   /// Backend server base URL
   /// Update this to your actual server URL
   static const String serverBaseUrl =
-      'https://fonex-backend-mobile-system.vercel.app/api/v1/devices';
+      'https://v0-fonex-backend-system-k6.vercel.app/api/v1/devices';
 
   /// API timeout in seconds
   static const int apiTimeoutSeconds = 10;
@@ -23,17 +23,19 @@ class FonexConfig {
   /// Supabase realtime configuration (set using --dart-define in production)
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: '',
+    defaultValue: 'https://itwyfrwkhohdrgpboagf.supabase.co',
   );
   static const String supabaseAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue: '',
+    defaultValue:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0d3lmcndraG9oZHJncGJvYWdmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1OTczODQsImV4cCI6MjA4NzE3MzM4NH0.sYiwReiVjaRtwVr2rMsppJHpGpA-dkQFjIByZ61HAU4',
   );
 
   /// Device secret used for command ACK calls
   static const String deviceSecret = String.fromEnvironment(
     'DEVICE_SECRET',
-    defaultValue: '',
+    defaultValue:
+        'bd2d3ee11180dc690715abf92a51308096625b0c16b48da07d651c8151d1e3c9',
   );
 
   /// Device command ACK endpoint path

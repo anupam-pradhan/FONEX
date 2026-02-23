@@ -39,7 +39,9 @@ class RealtimeCommandService {
 
   bool _isStarted = false;
   bool _isReconnecting = false;
+  int _reconnectAttempt = 0;
   String? _deviceId;
+  final Set<String> _acceptedDeviceIds = <String>{};
   Future<void> Function(DeviceRealtimeCommand command)? _commandHandler;
 
   final Set<String> _processedCommandIds = <String>{};
@@ -49,6 +51,7 @@ class RealtimeCommandService {
 
   Future<void> start({
     required String deviceId,
+    List<String> acceptedDeviceIds = const <String>[],
     required Future<void> Function(DeviceRealtimeCommand command) onCommand,
   }) async {
     if (_isStarted) return;
@@ -66,6 +69,15 @@ class RealtimeCommandService {
     }
 
     _deviceId = deviceId;
+    _reconnectAttempt = 0;
+    _acceptedDeviceIds
+      ..clear()
+      ..addAll(
+        <String>{
+          deviceId,
+          ...acceptedDeviceIds,
+        }.map((id) => id.trim()).where((id) => id.isNotEmpty),
+      );
     _commandHandler = onCommand;
     _isStarted = true;
 
@@ -85,6 +97,8 @@ class RealtimeCommandService {
     await _connectivitySubscription?.cancel();
     _connectivitySubscription = null;
     await _unsubscribe();
+    _acceptedDeviceIds.clear();
+    _reconnectAttempt = 0;
     _isStarted = false;
   }
 
@@ -108,6 +122,8 @@ class RealtimeCommandService {
     if (deviceId == null || deviceId.isEmpty) return;
 
     await _unsubscribe();
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
 
     final channelName = 'device-commands-$deviceId';
     final supabase = Supabase.instance.client;
@@ -122,6 +138,7 @@ class RealtimeCommandService {
 
     channel.subscribe((status, [error]) {
       if (status == RealtimeSubscribeStatus.subscribed) {
+        _reconnectAttempt = 0;
         debugPrint('Realtime subscribed for device $deviceId');
         return;
       }
@@ -132,7 +149,7 @@ class RealtimeCommandService {
         debugPrint(
           'Realtime disconnected ($status): ${error ?? 'no error details'}',
         );
-        _scheduleReconnect(const Duration(seconds: 2));
+        _scheduleReconnect(_nextReconnectDelay());
       }
     });
 
@@ -164,14 +181,27 @@ class RealtimeCommandService {
         row['id'] ?? row['command_id'] ?? row['commandId'],
       );
       final command = _normalize(row['command']).toUpperCase();
-      final rowDeviceId = _normalize(
-        row['device_id'] ?? row['deviceId'] ?? row['device_hash'],
+      final rowDeviceCandidates = <String>{
+        _normalize(row['device_id']),
+        _normalize(row['deviceId']),
+        _normalize(row['device_hash']),
+        _normalize(row['deviceHash']),
+      }..removeWhere((id) => id.isEmpty);
+      final matchedDeviceId = rowDeviceCandidates.firstWhere(
+        _acceptedDeviceIds.contains,
+        orElse: () => '',
       );
-      final activeDeviceId = _deviceId ?? '';
 
-      if (commandId.isEmpty ||
-          rowDeviceId.isEmpty ||
-          rowDeviceId != activeDeviceId) {
+      if (commandId.isEmpty) {
+        return;
+      }
+      if (matchedDeviceId.isEmpty) {
+        if (command == 'LOCK' || command == 'UNLOCK') {
+          debugPrint(
+            'Realtime command ignored due to device mismatch. '
+            'rowIds=$rowDeviceCandidates acceptedIds=$_acceptedDeviceIds commandId=$commandId',
+          );
+        }
         return;
       }
       if (command != 'LOCK' && command != 'UNLOCK') return;
@@ -184,7 +214,7 @@ class RealtimeCommandService {
       final event = DeviceRealtimeCommand(
         commandId: commandId,
         command: command,
-        deviceId: rowDeviceId,
+        deviceId: matchedDeviceId,
         rawRecord: row,
       );
       unawaited(_executeCommand(event));
@@ -229,12 +259,24 @@ class RealtimeCommandService {
 
   Future<void> _reconnect() async {
     if (!_isStarted || _isReconnecting) return;
+    final isOnline = await _hasNetworkConnectivity();
+    if (!isOnline) {
+      _scheduleReconnect(_nextReconnectDelay());
+      return;
+    }
+
     _isReconnecting = true;
     try {
       await _subscribeToCommands();
     } finally {
       _isReconnecting = false;
     }
+  }
+
+  Duration _nextReconnectDelay() {
+    final attempt = _reconnectAttempt++;
+    final seconds = min(30, 1 << min(attempt, 5));
+    return Duration(seconds: seconds);
   }
 
   Future<void> _markCommandProcessed(String commandId) async {

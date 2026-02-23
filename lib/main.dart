@@ -874,9 +874,14 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   Future<void> _startRealtimeListener() async {
     final deviceId = _realtimeDeviceId;
     if (deviceId == null || deviceId.isEmpty) return;
+    final acceptedIds = <String>[
+      if (_realtimeDeviceId != null) _realtimeDeviceId!,
+      if (_deviceHash != null) _deviceHash!,
+    ];
 
     await RealtimeCommandService().start(
       deviceId: deviceId,
+      acceptedDeviceIds: acceptedIds,
       onCommand: _handleRealtimeCommand,
     );
   }
@@ -910,8 +915,11 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     sendCommandAck(
       command.commandId,
       command: command.command,
-      deviceId: command.deviceId,
+      deviceId: _realtimeDeviceId ?? command.deviceId,
     );
+
+    // Push an immediate health/status sync so dashboard state updates quickly.
+    unawaited(_serverCheckIn());
   }
 
   void sendCommandAck(
@@ -1035,6 +1043,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         deviceId: _realtimeDeviceId ?? deviceHash,
         batteryLevel: batteryLevel,
         lastSeen: DateTime.now(),
+        isLocked: _isDeviceLocked,
       );
 
       if (response != null) {
