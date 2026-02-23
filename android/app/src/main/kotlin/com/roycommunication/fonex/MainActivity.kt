@@ -8,8 +8,12 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
+import android.os.Build
 import android.telephony.TelephonyManager
 import android.os.PowerManager
 import android.provider.Settings
@@ -54,8 +58,6 @@ class MainActivity : FlutterActivity() {
         if (deviceLockManager.isDeviceLocked() && deviceLockManager.isDeviceOwner()) {
             Log.i(TAG, "Device locked state detected — re-engaging lock")
             deviceLockManager.enableDeviceLock(this)
-            // Enable wake lock and keep screen on when locked
-            enableWakeLock()
         }
     }
     
@@ -105,9 +107,6 @@ class MainActivity : FlutterActivity() {
 
                 "startDeviceLock" -> {
                     val success = deviceLockManager.enableDeviceLock(this)
-                    if (success) {
-                        enableWakeLock() // Enable wake lock when device is locked
-                    }
                     result.success(success)
                 }
 
@@ -245,10 +244,63 @@ class MainActivity : FlutterActivity() {
                     result.success(deviceLockManager.enforceFactoryResetBlock())
                 }
 
+                "lockScreenNow" -> {
+                    result.success(deviceLockManager.lockScreenNow())
+                }
+
+                "ensureConnectivityForLock" -> {
+                    result.success(ensureConnectivityForLock())
+                }
+
                 else -> {
                     result.notImplemented()
                 }
             }
+        }
+    }
+
+    private fun ensureConnectivityForLock(): Map<String, Any> {
+        val alreadyConnected = isNetworkConnected()
+        if (alreadyConnected) {
+            return mapOf(
+                "already_connected" to true,
+                "attempted_recovery" to false,
+                "connected_now" to true
+            )
+        }
+
+        var attemptedRecovery = false
+        attemptedRecovery = deviceLockManager.requestConnectivityRecovery() || attemptedRecovery
+
+        // Best-effort Wi-Fi enable for Android versions that still allow it.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            try {
+                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                if (!wifiManager.isWifiEnabled) {
+                    attemptedRecovery = wifiManager.setWifiEnabled(true) || attemptedRecovery
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Wi-Fi enable attempt failed: ${e.message}")
+            }
+        }
+
+        return mapOf(
+            "already_connected" to false,
+            "attempted_recovery" to attemptedRecovery,
+            "connected_now" to isNetworkConnected()
+        )
+    }
+
+    private fun isNetworkConnected(): Boolean {
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(network) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } catch (e: Exception) {
+            Log.w(TAG, "Network check failed: ${e.message}")
+            false
         }
     }
 

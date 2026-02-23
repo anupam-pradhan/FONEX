@@ -29,8 +29,6 @@ const int _cooldownSeconds = FonexConfig.cooldownSeconds;
 const String _keyLastVerified = FonexConfig.keyLastVerified;
 const String _keyDeviceLocked = FonexConfig.keyDeviceLocked;
 const String _keySimAbsentSince = FonexConfig.keySimAbsentSince;
-const String _keyBatteryOptimizationPrompted = 'battery_optimization_prompted';
-const String _keyAutoStartPrompted = 'auto_start_prompted';
 const String _serverBaseUrl = FonexConfig.serverBaseUrl;
 const String _supportPhone1 = FonexConfig.supportPhone1;
 const String _supportPhone2 = FonexConfig.supportPhone2;
@@ -466,6 +464,15 @@ class StoreWallpaper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final warningColor = isLocked
+        ? FonexColors.red
+        : daysRemaining <= 7
+        ? FonexColors.orange
+        : FonexColors.accent;
+    final warningText = isLocked
+        ? 'DEVICE LOCKED • EMI AMOUNT PENDING'
+        : 'EMI AMOUNT PENDING • PAY BEFORE DUE DATE';
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -580,6 +587,69 @@ class StoreWallpaper extends StatelessWidget {
                       ),
                     ),
                   ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 78,
+            left: 12,
+            right: 12,
+            child: SafeArea(
+              child: IgnorePointer(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    gradient: LinearGradient(
+                      colors: [
+                        warningColor.withValues(alpha: 0.22),
+                        warningColor.withValues(alpha: 0.08),
+                      ],
+                    ),
+                    border: Border.all(
+                      color: warningColor.withValues(alpha: 0.55),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const FonexLogo(size: 20),
+                      const SizedBox(width: 8),
+                      Icon(
+                        isLocked
+                            ? Icons.lock_rounded
+                            : Icons.warning_amber_rounded,
+                        size: 16,
+                        color: warningColor,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          warningText,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: FonexColors.textPrimary,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ),
+                      if (!isLocked)
+                        Text(
+                          '$daysRemaining d',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: warningColor,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -740,6 +810,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         if (mounted) {
           _checkTimerAndLock();
           _checkSimState();
+          unawaited(_ensureConnectivityForLockedMode());
           unawaited(_ensureBackgroundKillProtection(allowUserPrompt: false));
           RealtimeCommandService().onAppResumed();
           RealtimeCommandService().ensureConnected();
@@ -897,6 +968,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       case 'LOCK':
         if (!_isDeviceLocked) {
           await lockDeviceLocally();
+          unawaited(_ensureConnectivityForLockedMode());
           if (mounted) {
             setState(() {
               _isDeviceLocked = true;
@@ -941,6 +1013,20 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     return result.any((item) => item != ConnectivityResult.none);
   }
 
+  Future<void> _ensureConnectivityForLockedMode() async {
+    if (!_isDeviceLocked) return;
+    try {
+      final result = await _channel.invokeMapMethod<String, dynamic>(
+        'ensureConnectivityForLock',
+      );
+      if (result != null) {
+        debugPrint('Connectivity recovery result: $result');
+      }
+    } catch (e) {
+      debugPrint('Connectivity recovery skipped: $e');
+    }
+  }
+
   Future<void> _ensureBackgroundKillProtection({
     required bool allowUserPrompt,
   }) async {
@@ -948,25 +1034,15 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       await _channel.invokeMethod('startKeepAliveService');
       await _channel.invokeMethod('scheduleKeepAliveWatchdog');
 
+      if (!allowUserPrompt) return;
+
       final isIgnoringBatteryOptimizations =
           await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
           true;
-      if (isIgnoringBatteryOptimizations || !allowUserPrompt) return;
-
-      final prefs = await SharedPreferences.getInstance();
-      final hasPromptedBattery =
-          prefs.getBool(_keyBatteryOptimizationPrompted) ?? false;
-      if (!hasPromptedBattery) {
-        await prefs.setBool(_keyBatteryOptimizationPrompted, true);
+      if (!isIgnoringBatteryOptimizations) {
         unawaited(_channel.invokeMethod('requestIgnoreBatteryOptimizations'));
       }
-
-      final hasPromptedAutoStart =
-          prefs.getBool(_keyAutoStartPrompted) ?? false;
-      if (!hasPromptedAutoStart) {
-        await prefs.setBool(_keyAutoStartPrompted, true);
-        unawaited(_channel.invokeMethod('openAutoStartSettings'));
-      }
+      unawaited(_channel.invokeMethod('openAutoStartSettings'));
     } catch (e) {
       debugPrint('Background protection setup skipped: $e');
     }
@@ -988,6 +1064,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     RealtimeCommandService().ensureConnected();
     if (_isConnecting) return;
     if (!await _hasNetworkConnectivity()) {
+      unawaited(_ensureConnectivityForLockedMode());
       if (mounted) {
         setState(() {
           _isServerConnected = false;
@@ -1755,7 +1832,7 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
       body: AnimatedGradientBg(
         child: Stack(
           children: [
-            const FloatingParticles(count: 20),
+            const FloatingParticles(count: 12),
             SafeArea(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
@@ -1993,7 +2070,7 @@ class _SplashScreenState extends State<SplashScreen>
       body: AnimatedGradientBg(
         child: Stack(
           children: [
-            const FloatingParticles(count: 15),
+            const FloatingParticles(count: 10),
             Center(
               child: FadeTransition(
                 opacity: _fadeIn,
@@ -2070,6 +2147,8 @@ class LockScreen extends StatefulWidget {
 }
 
 class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
+  static const _channel = MethodChannel(_channelName);
+
   late AnimationController _pulseController;
   late AnimationController _entryController;
   late Animation<double> _pulse;
@@ -2078,6 +2157,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
 
   int _unlockTapCount = 0;
   Timer? _tapResetTimer;
+  Timer? _screenOffTimer;
   String _deviceHash = '------';
 
   @override
@@ -2103,6 +2183,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
         );
 
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _scheduleAutoScreenOff();
   }
 
   @override
@@ -2110,6 +2191,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     _pulseController.dispose();
     _entryController.dispose();
     _tapResetTimer?.cancel();
+    _screenOffTimer?.cancel();
     super.dispose();
   }
 
@@ -2119,6 +2201,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
   }
 
   void _handleSecretTap() {
+    _scheduleAutoScreenOff();
     _unlockTapCount++;
     _tapResetTimer?.cancel();
     _tapResetTimer = Timer(const Duration(seconds: 3), () {
@@ -2155,6 +2238,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
   }
 
   void _showPaymentQr() {
+    _scheduleAutoScreenOff();
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -2226,30 +2310,44 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     );
   }
 
+  void _scheduleAutoScreenOff() {
+    _screenOffTimer?.cancel();
+    _screenOffTimer = Timer(const Duration(minutes: 1), () async {
+      try {
+        await _channel.invokeMethod('lockScreenNow');
+      } catch (e) {
+        debugPrint('Auto screen off skipped: $e');
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
       child: Scaffold(
-        body: AnimatedGradientBg(
-          colors: const [
-            Color(0xFF06080F),
-            Color(0xFF1A0A0A),
-            Color(0xFF0A0A1A),
-            Color(0xFF06080F),
-          ],
-          child: Stack(
-            children: [
-              const FloatingParticles(count: 25),
-              SafeArea(
-                child: FadeTransition(
-                  opacity: _fadeIn,
-                  child: SlideTransition(
-                    position: _slideUp,
-                    child: Center(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(horizontal: 28),
-                        child: Column(
+        body: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) => _scheduleAutoScreenOff(),
+          child: AnimatedGradientBg(
+            colors: const [
+              Color(0xFF06080F),
+              Color(0xFF1A0A0A),
+              Color(0xFF0A0A1A),
+              Color(0xFF06080F),
+            ],
+            child: Stack(
+              children: [
+                const FloatingParticles(count: 16),
+                SafeArea(
+                  child: FadeTransition(
+                    opacity: _fadeIn,
+                    child: SlideTransition(
+                      position: _slideUp,
+                      child: Center(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.symmetric(horizontal: 28),
+                          child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             // Pulsating lock icon
@@ -2626,12 +2724,13 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                             ),
                           ],
                         ),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -2877,7 +2976,7 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
           ],
           child: Stack(
             children: [
-              const FloatingParticles(count: 12),
+              const FloatingParticles(count: 8),
               SafeArea(
                 child: Column(
                   children: [
@@ -3546,17 +3645,10 @@ class SettingsScreen extends StatelessWidget {
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
-  // Facebook profile photo URL
-  // Option 1: Get direct image URL - Visit https://www.facebook.com/share/1JNRaFRMqc/
-  //          Right-click profile photo > Copy image address, then paste below
-  // Option 2: Use Facebook Graph API (requires username):
-  //          https://graph.facebook.com/{username}/picture?type=large
-  // Option 3: Leave empty to show initials placeholder
-  static const String _facebookProfilePhotoUrl = '';
-
-  // Alternative: Try to construct from share link (update if needed)
-  // For share link: https://www.facebook.com/share/1JNRaFRMqc/
-  // You can also use: https://graph.facebook.com/v18.0/{user-id}/picture?type=large
+  static const String _facebookProfileUrl =
+      'https://www.facebook.com/anupam.pradhan.35110/';
+  static const String _facebookProfileAssetPath =
+      'assets/images/facebook_profilephoto/FB_IMG_1743254515357.jpg';
 
   @override
   Widget build(BuildContext context) {
@@ -3658,201 +3750,171 @@ class AboutScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               // Developer Attribution
-              GlassCard(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Developed by',
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        color: FonexColors.textMuted,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    InkWell(
-                      onTap: () async {
-                        final uri = Uri.parse(
-                          'https://www.facebook.com/share/1JNRaFRMqc/',
-                        );
-                        if (await canLaunchUrl(uri)) {
-                          await launchUrl(
-                            uri,
-                            mode: LaunchMode.externalApplication,
-                          );
-                        }
-                      },
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: FonexColors.cardBorder,
-                            width: 1,
-                          ),
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: 0.96, end: 1.0),
+                duration: const Duration(milliseconds: 900),
+                curve: Curves.easeOutBack,
+                builder: (context, value, child) {
+                  return Transform.scale(scale: value, child: child);
+                },
+                child: GlassCard(
+                  padding: const EdgeInsets.all(20),
+                  borderColor: FonexColors.accent.withValues(alpha: 0.35),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Developed by',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: FonexColors.textMuted,
                         ),
-                        child: Row(
-                          children: [
-                            // Profile Photo Preview - Facebook style
-                            // Loading profile photo from Facebook
-                            Container(
-                              width: 64,
-                              height: 64,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: FonexColors.accent.withValues(
-                                    alpha: 0.3,
-                                  ),
-                                  width: 2,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: FonexColors.accent.withValues(
-                                      alpha: 0.2,
-                                    ),
-                                    blurRadius: 8,
-                                    spreadRadius: 1,
-                                  ),
-                                ],
-                              ),
-                              child: ClipOval(
-                                child: _facebookProfilePhotoUrl.isNotEmpty
-                                    ? Image.network(
-                                        _facebookProfilePhotoUrl,
-                                        width: 64,
-                                        height: 64,
-                                        fit: BoxFit.cover,
-                                        headers: const {
-                                          'User-Agent':
-                                              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                                        },
-                                        loadingBuilder: (context, child, loadingProgress) {
-                                          if (loadingProgress == null)
-                                            return child;
-                                          return Container(
-                                            width: 64,
-                                            height: 64,
-                                            decoration: BoxDecoration(
-                                              shape: BoxShape.circle,
-                                              color: FonexColors.card,
-                                            ),
-                                            child: Center(
-                                              child: SizedBox(
-                                                width: 24,
-                                                height: 24,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 2.5,
-                                                  value:
-                                                      loadingProgress
-                                                              .expectedTotalBytes !=
-                                                          null
-                                                      ? loadingProgress
-                                                                .cumulativeBytesLoaded /
-                                                            loadingProgress
-                                                                .expectedTotalBytes!
-                                                      : null,
-                                                  color: FonexColors.accent,
-                                                ),
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                        errorBuilder: (_, __, ___) =>
-                                            _buildProfilePlaceholder(),
-                                      )
-                                    : _buildProfilePlaceholder(),
-                              ),
+                      ),
+                      const SizedBox(height: 14),
+                      InkWell(
+                        onTap: () => _openDeveloperProfile(context),
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            gradient: LinearGradient(
+                              colors: [
+                                FonexColors.accent.withValues(alpha: 0.12),
+                                FonexColors.purple.withValues(alpha: 0.08),
+                              ],
                             ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Anupam Pradhan',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w700,
-                                      color: FonexColors.textPrimary,
+                            border: Border.all(
+                              color: FonexColors.accent.withValues(alpha: 0.35),
+                              width: 1.2,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: FonexColors.accent.withValues(
+                                  alpha: 0.18,
+                                ),
+                                blurRadius: 14,
+                                spreadRadius: 1,
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 72,
+                                height: 72,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: FonexColors.accent.withValues(
+                                      alpha: 0.55,
                                     ),
+                                    width: 2.5,
                                   ),
-                                  const SizedBox(height: 6),
-                                  Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: FonexColors.accent.withValues(
-                                            alpha: 0.15,
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.facebook_rounded,
-                                              color: FonexColors.accent,
-                                              size: 16,
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Text(
-                                              'View Profile',
-                                              style: GoogleFonts.inter(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
-                                                color: FonexColors.accent,
-                                              ),
-                                            ),
-                                          ],
+                                ),
+                                child: ClipOval(
+                                  child: Image.asset(
+                                    _facebookProfileAssetPath,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) =>
+                                        _buildProfilePlaceholder(),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Anupam Pradhan',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800,
+                                        color: FonexColors.textPrimary,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'System Developer',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        color: FonexColors.textSecondary,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF1877F2)
+                                            .withValues(alpha: 0.16),
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: const Color(0xFF1877F2)
+                                              .withValues(alpha: 0.45),
                                         ),
                                       ),
-                                    ],
-                                  ),
-                                ],
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(
+                                            Icons.facebook_rounded,
+                                            color: Color(0xFF5AA3FF),
+                                            size: 16,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            'Open Facebook Profile',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 11.5,
+                                              fontWeight: FontWeight.w700,
+                                              color: const Color(0xFF9BC5FF),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            Icon(
-                              Icons.arrow_forward_ios_rounded,
-                              color: FonexColors.textMuted,
-                              size: 16,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Container(height: 1, color: FonexColors.cardBorder),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.code_rounded,
-                          color: FonexColors.textMuted,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'This app and system was designed and developed by Anupam Pradhan',
-                            style: GoogleFonts.inter(
-                              fontSize: 12,
-                              color: FonexColors.textMuted,
-                              fontStyle: FontStyle.italic,
-                            ),
+                              const SizedBox(width: 8),
+                              Icon(
+                                Icons.open_in_new_rounded,
+                                color: FonexColors.textSecondary,
+                                size: 18,
+                              ),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
-                  ],
+                      ),
+                      const SizedBox(height: 14),
+                      Container(height: 1, color: FonexColors.cardBorder),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.code_rounded,
+                            color: FonexColors.textMuted,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'This app and system was designed and developed by Anupam Pradhan',
+                              style: GoogleFonts.inter(
+                                fontSize: 12,
+                                color: FonexColors.textMuted,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -3860,6 +3922,43 @@ class AboutScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _openDeveloperProfile(BuildContext context) async {
+    final externalUri = Uri.parse(_facebookProfileUrl);
+    final fallbackUri = Uri.parse('https://m.facebook.com/anupam.pradhan.35110/');
+
+    try {
+      final openedInApp = await launchUrl(
+        externalUri,
+        mode: LaunchMode.inAppBrowserView,
+      );
+      if (openedInApp) return;
+    } catch (_) {}
+
+    try {
+      final openedExternal = await launchUrl(
+        externalUri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (openedExternal) return;
+    } catch (_) {}
+
+    try {
+      final openedFallback = await launchUrl(
+        fallbackUri,
+        mode: LaunchMode.inAppBrowserView,
+      );
+      if (openedFallback) return;
+    } catch (_) {}
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to open Facebook profile right now.'),
+        ),
+      );
+    }
   }
 
   Widget _buildContactRow(IconData icon, String text) {

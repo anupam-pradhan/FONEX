@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.provider.Settings
 import android.os.UserManager
 import android.util.Log
 import android.view.View
@@ -75,10 +76,15 @@ class DeviceLockManager(private val context: Context) {
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
             // Prevent removing users (additional security)
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_REMOVE_USER)
+            // Reduce chances of user disabling connectivity while locked
+            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_WIFI)
+            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS)
 
             // Enforce automatic time to prevent local timer tampering
             devicePolicyManager.setGlobalSetting(adminComponent, android.provider.Settings.Global.AUTO_TIME, "1")
             devicePolicyManager.setAutoTimeRequired(adminComponent, true)
+            // Auto-lock screen after 1 minute idle to save battery in locked mode.
+            devicePolicyManager.setMaximumTimeToLock(adminComponent, 60_000L)
 
 
             // Start Lock Task
@@ -126,6 +132,9 @@ class DeviceLockManager(private val context: Context) {
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES)
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_REMOVE_USER)
+            devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_WIFI)
+            devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS)
+            devicePolicyManager.setMaximumTimeToLock(adminComponent, 0L)
 
             // Exit immersive mode
             disableImmersiveMode(activity)
@@ -307,6 +316,35 @@ class DeviceLockManager(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error enforcing factory reset block: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Turn off the screen immediately while keeping lock mode active.
+     */
+    fun lockScreenNow(): Boolean {
+        return try {
+            if (!isDeviceOwner()) return false
+            devicePolicyManager.lockNow()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to lock screen now: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * Best-effort connectivity recovery for locked mode.
+     * Note: Android 10+ may still restrict direct Wi-Fi toggling for non-system apps.
+     */
+    fun requestConnectivityRecovery(): Boolean {
+        return try {
+            if (!isDeviceOwner()) return false
+            devicePolicyManager.setGlobalSetting(adminComponent, Settings.Global.WIFI_ON, "1")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Connectivity recovery via DPM failed: ${e.message}")
             false
         }
     }
