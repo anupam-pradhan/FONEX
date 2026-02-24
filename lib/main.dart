@@ -1406,13 +1406,13 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  isHealthy
-                      ? 'Device is fully protected and verified'
-                      : 'Device protection needs configuration',
-                  style: GoogleFonts.inter(
-                    fontSize: 13,
-                    color: FonexColors.textSecondary,
+                  Text(
+                    isHealthy
+                        ? 'Device is fully protected and verified'
+                        : 'Device protection not configured. Retry Make Owner.',
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      color: FonexColors.textSecondary,
                   ),
                 ),
               ],
@@ -1708,7 +1708,7 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                 Text(
                   isHealthy
                       ? 'Device is fully protected and verified'
-                      : 'Device protection needs configuration',
+                      : 'Device protection not configured. Retry Make Owner.',
                   style: GoogleFonts.inter(
                     fontSize: 13,
                     color: FonexColors.textSecondary,

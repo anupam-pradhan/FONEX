@@ -68,21 +68,32 @@ class MainActivity : FlutterActivity() {
         // Ensure reset/uninstall protection persists across app restarts.
         if (deviceLockManager.isDeviceOwner()) {
             deviceLockManager.enforceFactoryResetBlock()
-        }
+            val paidInFull = isPaidInFull()
 
-        // If device was locked before (e.g., after reboot), re-engage lock task
-        if (deviceLockManager.isDeviceLocked() && deviceLockManager.isDeviceOwner()) {
-            Log.i(TAG, "Device locked state detected — re-engaging lock")
-            deviceLockManager.enableDeviceLock(this)
-            applyWarningSystemWallpaper(refreshBackup = false)
+            // If device was locked before (e.g., after reboot), re-engage lock task
+            if (deviceLockManager.isDeviceLocked()) {
+                Log.i(TAG, "Device locked state detected — re-engaging lock")
+                deviceLockManager.enableDeviceLock(this)
+            }
+
+            if (!paidInFull) {
+                // Show EMI warning wallpaper for active unpaid devices.
+                applyWarningSystemWallpaper(refreshBackup = false)
+            } else {
+                restoreOriginalSystemWallpaper()
+            }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        if (deviceLockManager.isDeviceLocked() && deviceLockManager.isDeviceOwner()) {
-            // Ensure warning wallpaper stays visible while locked.
-            applyWarningSystemWallpaper(refreshBackup = false)
+        if (deviceLockManager.isDeviceOwner()) {
+            if (isPaidInFull()) {
+                restoreOriginalSystemWallpaper()
+            } else {
+                // Ensure warning wallpaper stays visible for unpaid devices.
+                applyWarningSystemWallpaper(refreshBackup = false)
+            }
         }
     }
     
@@ -393,6 +404,11 @@ class MainActivity : FlutterActivity() {
         val backupFile = File(filesDir, ORIGINAL_WALLPAPER_FILE)
         if (!backupFile.exists()) return null
         return BitmapFactory.decodeFile(backupFile.absolutePath)
+    }
+
+    private fun isPaidInFull(): Boolean {
+        val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+        return prefs.getBoolean("is_paid_in_full", false)
     }
 
     private fun drawWarningBanner(base: Bitmap): Bitmap {
