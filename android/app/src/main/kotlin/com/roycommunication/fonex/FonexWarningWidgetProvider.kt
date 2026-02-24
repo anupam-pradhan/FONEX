@@ -55,6 +55,12 @@ class FonexWarningWidgetProvider : AppWidgetProvider() {
                 )
             }
 
+            // Force marquee scrolling for long text lines.
+            views.setBoolean(R.id.emi_status_title, "setSelected", true)
+            views.setBoolean(R.id.emi_status_subtitle, "setSelected", true)
+            views.setBoolean(R.id.emi_status_subtitle_bn, "setSelected", true)
+            views.setBoolean(R.id.emi_status_phone, "setSelected", true)
+
             val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
             if (launchIntent != null) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)

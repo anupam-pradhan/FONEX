@@ -29,6 +29,21 @@ class DeviceLockManager(private val context: Context) {
         private const val KEY_DEVICE_LOCKED = "device_locked"
         private const val RESTRICTION_NO_SET_WALLPAPER = "no_set_wallpaper"
         private const val GOOGLE_ACCOUNT_TYPE = "com.google"
+        private val WALLPAPER_PICKER_PACKAGES = listOf(
+            "com.google.android.apps.wallpaper",
+            "com.android.wallpaper",
+            "com.android.wallpaper.livepicker",
+            "com.android.wallpaperpicker",
+            "com.miui.miwallpaper",
+            "com.xiaomi.thememanager",
+            "com.samsung.android.app.dressroom",
+            "com.samsung.android.dynamiclock",
+            "com.samsung.android.themestore",
+            "com.samsung.android.app.wallpaperchooser",
+            "com.heytap.themestore",
+            "com.coloros.wallpaper",
+            "com.vivo.thememanager"
+        )
     }
 
     private val devicePolicyManager: DevicePolicyManager =
@@ -92,6 +107,7 @@ class DeviceLockManager(private val context: Context) {
             }
             // Keep personal Google account sign-in available.
             allowNormalGoogleAccounts()
+            setWallpaperPickerAppsHidden(hidden = true)
 
             // Enforce automatic time to prevent local timer tampering
             devicePolicyManager.setGlobalSetting(adminComponent, android.provider.Settings.Global.AUTO_TIME, "1")
@@ -161,6 +177,7 @@ class DeviceLockManager(private val context: Context) {
             } catch (e: Exception) {
                 Log.w(TAG, "Could not update wallpaper restriction: ${e.message}")
             }
+            setWallpaperPickerAppsHidden(hidden = !isPaidInFull)
             allowNormalGoogleAccounts()
             devicePolicyManager.setMaximumTimeToLock(adminComponent, 0L)
 
@@ -274,6 +291,7 @@ class DeviceLockManager(private val context: Context) {
                 } catch (e: Exception) {
                     Log.w(TAG, "Could not clear wallpaper restriction: ${e.message}")
                 }
+                setWallpaperPickerAppsHidden(hidden = false)
                 allowNormalGoogleAccounts()
                 setDeviceLockedFlag(false)
                 
@@ -346,6 +364,7 @@ class DeviceLockManager(private val context: Context) {
                     } catch (e: Exception) {
                         Log.w(TAG, "Could not enforce wallpaper change block: ${e.message}")
                     }
+                    setWallpaperPickerAppsHidden(hidden = true)
                     Log.i(TAG, "Factory reset blocking enforced (EMI not paid)")
                     true
                 } else {
@@ -357,10 +376,12 @@ class DeviceLockManager(private val context: Context) {
                     } catch (e: Exception) {
                         Log.w(TAG, "Could not clear wallpaper change block: ${e.message}")
                     }
+                    setWallpaperPickerAppsHidden(hidden = false)
                     Log.i(TAG, "Factory reset allowed (EMI paid in full)")
                     false
                 }
             } else {
+                Log.w(TAG, "Cannot enforce restrictions: app is not Device Owner")
                 false
             }
         } catch (e: Exception) {
@@ -472,6 +493,22 @@ class DeviceLockManager(private val context: Context) {
                 )
             } catch (e: Exception) {
                 Log.w(TAG, "Could not enable account management for '$accountType': ${e.message}")
+            }
+        }
+    }
+
+    private fun setWallpaperPickerAppsHidden(hidden: Boolean) {
+        if (!isDeviceOwner()) return
+        WALLPAPER_PICKER_PACKAGES.forEach { packageName ->
+            try {
+                val currentHidden = devicePolicyManager.isApplicationHidden(adminComponent, packageName)
+                if (currentHidden != hidden) {
+                    devicePolicyManager.setApplicationHidden(adminComponent, packageName, hidden)
+                    Log.i(TAG, "Wallpaper app '$packageName' hidden=$hidden")
+                }
+            } catch (e: Exception) {
+                // Ignore missing packages or OEM restrictions.
+                Log.d(TAG, "Wallpaper app policy skipped for '$packageName': ${e.message}")
             }
         }
     }

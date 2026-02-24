@@ -1982,6 +1982,108 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
     );
   }
 
+  Widget _buildEmiInfoRow(String label, String value, [Color? valueColor]) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              color: FonexColors.textSecondary,
+            ),
+          ),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: valueColor ?? FonexColors.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFullEmiDetailsCard() {
+    final nextPaymentDate = DateTime.now().add(
+      Duration(days: widget.daysRemaining > 0 ? widget.daysRemaining : 0),
+    );
+    final urgentColor = widget.daysRemaining <= 7
+        ? FonexColors.red
+        : widget.daysRemaining <= 14
+        ? FonexColors.orange
+        : FonexColors.green;
+
+    return GlassCard(
+      padding: const EdgeInsets.all(20),
+      borderColor: urgentColor.withValues(alpha: 0.32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.receipt_long_rounded, size: 18, color: urgentColor),
+              const SizedBox(width: 8),
+              Text(
+                'Full EMI Information',
+                style: GoogleFonts.inter(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: FonexColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildEmiInfoRow('Store', _storeName),
+          const Divider(color: FonexColors.cardBorder),
+          _buildEmiInfoRow('Support 1', _supportPhone1),
+          const Divider(color: FonexColors.cardBorder),
+          _buildEmiInfoRow('Support 2', _supportPhone2),
+          const Divider(color: FonexColors.cardBorder),
+          _buildEmiInfoRow('Payment Period', '${widget.lockWindowDays} days'),
+          const Divider(color: FonexColors.cardBorder),
+          _buildEmiInfoRow('Days Remaining', '${widget.daysRemaining} days', urgentColor),
+          const Divider(color: FonexColors.cardBorder),
+          _buildEmiInfoRow('Next Due Date', _formatDate(nextPaymentDate), urgentColor),
+          const Divider(color: FonexColors.cardBorder),
+          _buildEmiInfoRow(
+            'Status',
+            widget.daysRemaining > 0 ? 'Active' : 'Locked',
+            widget.daysRemaining > 0 ? FonexColors.green : FonexColors.red,
+          ),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: FonexColors.orange.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: FonexColors.orange.withValues(alpha: 0.4)),
+            ),
+            child: Text(
+              'Please pay EMI before due date to avoid device lock.',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                color: FonexColors.textPrimary,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) => '${date.day}/${date.month}/${date.year}';
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2064,6 +2166,8 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                     _buildServerConnectionCard(),
                     const SizedBox(height: 16),
                     _buildProgressCard(),
+                    const SizedBox(height: 16),
+                    _buildFullEmiDetailsCard(),
                     const SizedBox(height: 24),
                     // Feature cards
                     Row(

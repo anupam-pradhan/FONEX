@@ -36,6 +36,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.max
 
 /**
  * MainActivity — Flutter host activity with MethodChannel bridge.
@@ -53,7 +54,9 @@ class MainActivity : FlutterActivity() {
         private const val KEY_WIDGET_PIN_REQUESTED = "emi_widget_pin_requested"
         private const val KEY_WARNING_WALLPAPER_APPLIED = "warning_wallpaper_applied"
         private const val KEY_WARNING_WALLPAPER_VERSION = "warning_wallpaper_version"
+        private const val KEY_WARNING_WALLPAPER_LAST_APPLIED_AT = "warning_wallpaper_last_applied_at"
         private const val WARNING_WALLPAPER_VERSION = 2
+        private const val WARNING_WALLPAPER_REAPPLY_COOLDOWN_MS = 8_000L
         private const val SUPPORT_STORE_NAME = "Roy Communication"
         private const val SUPPORT_PHONE_1 = "+91 8388855549"
         private const val SUPPORT_PHONE_2 = "+91 9635252455"
@@ -360,10 +363,12 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun applyWarningSystemWallpaper(refreshBackup: Boolean) {
+        val now = System.currentTimeMillis()
         if (
             !refreshBackup &&
             isWarningWallpaperMarkedApplied() &&
-            isCurrentWarningWallpaperVersionApplied()
+            isCurrentWarningWallpaperVersionApplied() &&
+            (now - getWarningWallpaperLastAppliedAt()) < WARNING_WALLPAPER_REAPPLY_COOLDOWN_MS
         ) {
             Log.i(TAG, "Skipping warning wallpaper reapply: already applied")
             return
@@ -480,6 +485,11 @@ class MainActivity : FlutterActivity() {
         prefs.edit().putBoolean(KEY_WARNING_WALLPAPER_APPLIED, applied).apply()
     }
 
+    private fun getWarningWallpaperLastAppliedAt(): Long {
+        val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+        return prefs.getLong(KEY_WARNING_WALLPAPER_LAST_APPLIED_AT, 0L)
+    }
+
     private fun isCurrentWarningWallpaperVersionApplied(): Boolean {
         val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
         return prefs.getInt(KEY_WARNING_WALLPAPER_VERSION, 0) == WARNING_WALLPAPER_VERSION
@@ -490,6 +500,7 @@ class MainActivity : FlutterActivity() {
         prefs.edit()
             .putBoolean(KEY_WARNING_WALLPAPER_APPLIED, true)
             .putInt(KEY_WARNING_WALLPAPER_VERSION, WARNING_WALLPAPER_VERSION)
+            .putLong(KEY_WARNING_WALLPAPER_LAST_APPLIED_AT, System.currentTimeMillis())
             .apply()
     }
 
@@ -524,7 +535,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun drawWarningBanner(base: Bitmap): Bitmap {
-        val bitmap = base.copy(Bitmap.Config.ARGB_8888, true)
+        val bitmap = fitBitmapToScreen(base).copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(bitmap)
 
         val width = bitmap.width.toFloat()
@@ -636,11 +647,54 @@ class MainActivity : FlutterActivity() {
 
     private fun setSystemWallpaper(bitmap: Bitmap) {
         val wallpaperManager = WallpaperManager.getInstance(applicationContext)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            wallpaperManager.setBitmap(bitmap, null, true, WallpaperManager.FLAG_SYSTEM)
-        } else {
-            wallpaperManager.setBitmap(bitmap)
+        val wallpaperBitmap = fitBitmapToScreen(bitmap)
+        val (screenWidth, screenHeight) = getScreenWallpaperSize()
+        try {
+            wallpaperManager.suggestDesiredDimensions(screenWidth, screenHeight)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to set desired wallpaper dimensions: ${e.message}")
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            wallpaperManager.setBitmap(wallpaperBitmap, null, true, WallpaperManager.FLAG_SYSTEM)
+        } else {
+            wallpaperManager.setBitmap(wallpaperBitmap)
+        }
+    }
+
+    private fun getScreenWallpaperSize(): Pair<Int, Int> {
+        val metrics = resources.displayMetrics
+        val width = max(metrics.widthPixels, 1080)
+        val height = max(metrics.heightPixels, 1920)
+        return width to height
+    }
+
+    private fun fitBitmapToScreen(source: Bitmap): Bitmap {
+        val (targetWidth, targetHeight) = getScreenWallpaperSize()
+        if (source.width == targetWidth && source.height == targetHeight) {
+            return source
+        }
+
+        val scale = max(
+            targetWidth.toFloat() / source.width.toFloat(),
+            targetHeight.toFloat() / source.height.toFloat()
+        )
+        val scaledWidth = source.width * scale
+        val scaledHeight = source.height * scale
+        val left = (targetWidth - scaledWidth) / 2f
+        val top = (targetHeight - scaledHeight) / 2f
+
+        val output = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            isFilterBitmap = true
+        }
+        canvas.drawBitmap(
+            source,
+            null,
+            RectF(left, top, left + scaledWidth, top + scaledHeight),
+            paint
+        )
+        return output
     }
 
     private fun isNetworkConnected(): Boolean {
