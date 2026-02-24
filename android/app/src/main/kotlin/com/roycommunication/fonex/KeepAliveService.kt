@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
@@ -19,6 +20,7 @@ import androidx.core.content.ContextCompat
 class KeepAliveService : Service() {
 
     companion object {
+        private const val TAG = "FonexKeepAliveService"
         private const val CHANNEL_ID = "fonex_keepalive_channel"
         private const val CHANNEL_NAME = "FONEX Protection"
         private const val NOTIFICATION_ID = 2207
@@ -32,9 +34,11 @@ class KeepAliveService : Service() {
     override fun onCreate() {
         super.onCreate()
         startForeground(NOTIFICATION_ID, buildNotification())
+        reEnforcePolicies()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        reEnforcePolicies()
         return START_STICKY
     }
 
@@ -73,5 +77,19 @@ class KeepAliveService : Service() {
         )
         channel.description = "Keeps FONEX protection active in background"
         manager.createNotificationChannel(channel)
+    }
+
+    private fun reEnforcePolicies() {
+        try {
+            val manager = DeviceLockManager(applicationContext)
+            if (!manager.isDeviceOwner()) return
+            val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+            val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
+            manager.enforceFactoryResetBlock()
+            manager.enforceHomeLauncher(unpaidMode = !isPaidInFull)
+            Log.i(TAG, "Policies re-enforced from keep-alive service. paidInFull=$isPaidInFull")
+        } catch (e: Exception) {
+            Log.w(TAG, "Policy re-enforcement failed: ${e.message}")
+        }
     }
 }

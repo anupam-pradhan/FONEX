@@ -290,9 +290,10 @@ class MainActivity : FlutterActivity() {
                         deviceLockManager.setDeviceLockedFlag(false)
                         restoreOriginalSystemWallpaper()
                         releaseWakeLock()
-                        deviceLockManager.enforceFactoryResetBlock() // This will remove the restriction
-                        val ownerCleared = deviceLockManager.clearDeviceOwner()
-                        Log.i(TAG, "Paid-in-full mode enabled. clearDeviceOwner=$ownerCleared")
+                        // Keep Device Owner active so management can be re-applied if needed.
+                        // Paid mode still clears reset/uninstall restrictions via enforceFactoryResetBlock().
+                        deviceLockManager.enforceFactoryResetBlock()
+                        Log.i(TAG, "Paid-in-full mode enabled. Device Owner retained.")
                     } else {
                         // Re-enforce restrictions if payment status changes
                         deviceLockManager.enforceFactoryResetBlock()
