@@ -1414,6 +1414,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
               isDeviceOwner: _isDeviceOwner,
               daysRemaining: _daysRemaining,
               lockWindowDays: _lockWindowDays,
+              showEmiWarningWidget: !_isPaidInFull,
               onSimulateExpiry: _devSimulateExpiry,
               isServerConnected: _isServerConnected,
               serverStatusMessage: _serverStatusMessage,
@@ -1698,6 +1699,7 @@ class NormalModeScreen extends StatefulWidget {
   final bool isDeviceOwner;
   final int daysRemaining;
   final int lockWindowDays;
+  final bool showEmiWarningWidget;
   final VoidCallback onSimulateExpiry;
   final bool isServerConnected;
   final String serverStatusMessage;
@@ -1710,6 +1712,7 @@ class NormalModeScreen extends StatefulWidget {
     required this.isDeviceOwner,
     required this.daysRemaining,
     required this.lockWindowDays,
+    required this.showEmiWarningWidget,
     required this.onSimulateExpiry,
     required this.isServerConnected,
     required this.serverStatusMessage,
@@ -1723,6 +1726,122 @@ class NormalModeScreen extends StatefulWidget {
 }
 
 class _NormalModeScreenState extends State<NormalModeScreen> {
+  Widget _buildPinnedEmiWidget(BuildContext context) {
+    final topInset = MediaQuery.of(context).padding.top;
+    final alertColor = widget.daysRemaining <= 7
+        ? FonexColors.red
+        : FonexColors.orange;
+    final headerText = widget.daysRemaining <= 0
+        ? 'PAYMENT OVERDUE'
+        : 'EMI PAYMENT DUE';
+
+    return Positioned(
+      top: topInset + 10,
+      left: 12,
+      right: 12,
+      child: IgnorePointer(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              colors: [
+                const Color(0xFF111A2C).withValues(alpha: 0.94),
+                const Color(0xFF1A2740).withValues(alpha: 0.9),
+              ],
+            ),
+            border: Border.all(
+              color: alertColor.withValues(alpha: 0.82),
+              width: 1.3,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              const FonexLogo(size: 30),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.warning_amber_rounded,
+                          size: 14,
+                          color: alertColor,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            headerText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.35,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'This device has pending EMI.',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 10.5,
+                        color: FonexColors.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Call: $_supportPhone1  |  $_supportPhone2',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 10,
+                        color: FonexColors.cyan,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+                decoration: BoxDecoration(
+                  color: alertColor.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: alertColor.withValues(alpha: 0.65)),
+                ),
+                child: Text(
+                  '${widget.daysRemaining}d',
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: alertColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildHeroStatus() {
     final isHealthy = widget.isDeviceOwner && widget.daysRemaining > 0;
     return GlassCard(
@@ -1984,17 +2103,20 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final contentTopPadding = widget.showEmiWarningWidget ? 92.0 : 20.0;
     return Scaffold(
-      body: AnimatedGradientBg(
-        child: Stack(
-          children: [
-            const FloatingParticles(count: 12),
-            SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+      body: Stack(
+        children: [
+          AnimatedGradientBg(
+            child: Stack(
+              children: [
+                const FloatingParticles(count: 12),
+                SafeArea(
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(20, contentTopPadding, 20, 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                     // Header
                     Row(
                       children: [
@@ -2172,13 +2294,16 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 40),
-                  ],
+                        const SizedBox(height: 40),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
-          ],
-        ),
+          ),
+          if (widget.showEmiWarningWidget) _buildPinnedEmiWidget(context),
+        ],
       ),
     );
   }

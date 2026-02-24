@@ -24,6 +24,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
@@ -343,8 +344,8 @@ class MainActivity : FlutterActivity() {
         try {
             ensureOriginalWallpaperBackup(forceRefresh = refreshBackup)
             val base = loadOriginalWallpaperBitmap() ?: loadCurrentWallpaperBitmap() ?: run {
-                Log.w(TAG, "No readable wallpaper source; using generated fallback base")
-                createFallbackWallpaperBaseBitmap()
+                Log.w(TAG, "No readable wallpaper source; keeping existing wallpaper unchanged")
+                return
             }
             val warningBitmap = drawWarningBanner(base)
             setSystemWallpaper(warningBitmap)
@@ -445,86 +446,128 @@ class MainActivity : FlutterActivity() {
 
         val width = bitmap.width.toFloat()
         val height = bitmap.height.toFloat()
-        val bannerHeight = (height * 0.4f).coerceAtLeast(420f)
-        val top = height - bannerHeight
+        val margin = (width * 0.04f).coerceIn(20f, 56f)
+        val cardHeight = (height * 0.2f).coerceIn(220f, 360f)
+        val cardLeft = margin
+        val cardTop = height - cardHeight - margin
+        val cardRight = width - margin
+        val cardBottom = height - margin
+        val cardRadius = (cardHeight * 0.13f).coerceIn(18f, 34f)
+        val cardRect = RectF(cardLeft, cardTop, cardRight, cardBottom)
 
-        val bannerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        val cardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             shader = LinearGradient(
-                0f,
-                top,
-                0f,
-                height,
+                cardLeft,
+                cardTop,
+                cardLeft,
+                cardBottom,
                 intArrayOf(
-                    Color.argb(220, 120, 0, 0),
-                    Color.argb(235, 185, 22, 22)
+                    Color.argb(162, 8, 16, 29),
+                    Color.argb(148, 10, 20, 35)
                 ),
                 null,
                 Shader.TileMode.CLAMP
             )
         }
-        canvas.drawRect(0f, top, width, height, bannerPaint)
+        val cardBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = (width * 0.0026f).coerceIn(1.6f, 3.2f)
+            color = Color.argb(175, 225, 235, 248)
+        }
+        canvas.drawRoundRect(cardRect, cardRadius, cardRadius, cardPaint)
+        canvas.drawRoundRect(cardRect, cardRadius, cardRadius, cardBorderPaint)
 
-        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = (width * 0.046f).coerceAtMost(48f)
-            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
-            setShadowLayer(6f, 0f, 2f, Color.argb(120, 0, 0, 0))
-        }
-        val subtitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(245, 255, 240, 240)
-            textSize = (width * 0.028f).coerceAtMost(30f)
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
-        }
-        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = (width * 0.056f).coerceAtMost(66f)
-            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
-            setShadowLayer(8f, 0f, 2f, Color.argb(120, 0, 0, 0))
-        }
-        val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(245, 255, 240, 240)
-            textSize = (width * 0.03f).coerceAtMost(33f)
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+        val padding = (width * 0.03f).coerceIn(16f, 34f)
+        val logoRadius = (cardHeight * 0.18f).coerceIn(24f, 40f)
+        val logoCenterX = cardLeft + padding + logoRadius
+        val logoCenterY = cardTop + cardHeight / 2f
+
+        val logoShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(105, 0, 0, 0)
         }
         val logoBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(235, 255, 255, 255)
+            color = Color.argb(244, 255, 255, 255)
         }
         val logoBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(235, 120, 0, 0)
+            color = Color.argb(225, 74, 133, 226)
             style = Paint.Style.STROKE
-            strokeWidth = 3f
+            strokeWidth = 2.5f
+        }
+        val logoOuterRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(130, 235, 243, 255)
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
         }
         val logoTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(255, 175, 22, 22)
-            textSize = (width * 0.05f).coerceAtMost(52f)
+            color = Color.argb(255, 40, 96, 205)
+            textSize = (logoRadius * 1.05f).coerceAtLeast(24f)
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
         }
+        val logoDrawable = BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
+        val logoDrawRadius = logoRadius - 4f
+        val logoLeft = logoCenterX - logoDrawRadius
+        val logoTop = logoCenterY - logoDrawRadius
+        val logoRight = logoCenterX + logoDrawRadius
+        val logoBottom = logoCenterY + logoDrawRadius
 
-        val padding = width * 0.06f
-        val logoRadius = (width * 0.042f).coerceIn(24f, 40f)
-        val logoCenterX = padding + logoRadius
-        val logoCenterY = top + bannerHeight * 0.16f
+        canvas.drawCircle(logoCenterX + 1.5f, logoCenterY + 2f, logoRadius + 1.5f, logoShadowPaint)
         canvas.drawCircle(logoCenterX, logoCenterY, logoRadius, logoBgPaint)
         canvas.drawCircle(logoCenterX, logoCenterY, logoRadius, logoBorderPaint)
-        val logoTextY = logoCenterY - (logoTextPaint.descent() + logoTextPaint.ascent()) / 2
-        canvas.drawText("F", logoCenterX, logoTextY, logoTextPaint)
+        canvas.drawCircle(logoCenterX, logoCenterY, logoRadius + 4f, logoOuterRingPaint)
 
-        val brandX = logoCenterX + logoRadius + 16f
-        val brandY = logoCenterY - 6f
-        canvas.drawText("FONEX", brandX, brandY, brandPaint)
-        canvas.drawText("Powered by $SUPPORT_STORE_NAME", brandX, brandY + bannerHeight * 0.09f, subtitlePaint)
+        if (logoDrawable != null && !logoDrawable.isRecycled) {
+            val logoSrc = android.graphics.Rect(0, 0, logoDrawable.width, logoDrawable.height)
+            val logoDst = RectF(logoLeft, logoTop, logoRight, logoBottom)
+            canvas.drawBitmap(logoDrawable, logoSrc, logoDst, Paint(Paint.ANTI_ALIAS_FLAG))
+        } else {
+            val logoTextY = logoCenterY - (logoTextPaint.descent() + logoTextPaint.ascent()) / 2f
+            canvas.drawText("F", logoCenterX, logoTextY, logoTextPaint)
+        }
 
-        var y = top + bannerHeight * 0.42f
-        canvas.drawText("EMI PAYMENT PENDING", padding, y, titlePaint)
-        y += bannerHeight * 0.14f
-        canvas.drawText("Pay EMI to unlock this device.", padding, y, linePaint)
-        y += bannerHeight * 0.13f
-        canvas.drawText("Contact support:", padding, y, linePaint)
-        y += bannerHeight * 0.12f
-        canvas.drawText("\u260E $SUPPORT_PHONE_1", padding, y, linePaint)
-        y += bannerHeight * 0.11f
-        canvas.drawText("\u260E $SUPPORT_PHONE_2", padding, y, linePaint)
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = (width * 0.037f).coerceIn(24f, 38f)
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+            setShadowLayer(3f, 0f, 1f, Color.argb(120, 0, 0, 0))
+        }
+        val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(245, 235, 241, 252)
+            textSize = (width * 0.024f).coerceIn(17f, 26f)
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+        }
+
+        val textStartX = logoCenterX + logoRadius + padding
+        val textEndX = cardRight - padding
+        val textMaxWidth = textEndX - textStartX
+
+        fun fitText(paint: Paint, text: String, minSize: Float) {
+            while (paint.measureText(text) > textMaxWidth && paint.textSize > minSize) {
+                paint.textSize -= 1f
+            }
+        }
+
+        val brandLine = "FONEX"
+        val titleLine = "EMI PAYMENT PENDING"
+        val infoLine = "This device has pending payment."
+        val phoneLine1 = "Phone: $SUPPORT_PHONE_1"
+        val phoneLine2 = "Phone: $SUPPORT_PHONE_2"
+
+        fitText(titlePaint, titleLine, 18f)
+        fitText(linePaint, infoLine, 14f)
+        fitText(linePaint, phoneLine1, 14f)
+        fitText(linePaint, phoneLine2, 14f)
+
+        var y = cardTop + padding - linePaint.ascent()
+        canvas.drawText(brandLine, textStartX, y, linePaint)
+        y += (cardHeight * 0.2f).coerceIn(30f, 44f)
+        canvas.drawText(titleLine, textStartX, y, titlePaint)
+        y += (cardHeight * 0.18f).coerceIn(26f, 40f)
+        canvas.drawText(infoLine, textStartX, y, linePaint)
+        y += (cardHeight * 0.17f).coerceIn(24f, 36f)
+        canvas.drawText(phoneLine1, textStartX, y, linePaint)
+        y += (cardHeight * 0.16f).coerceIn(22f, 34f)
+        canvas.drawText(phoneLine2, textStartX, y, linePaint)
 
         return bitmap
     }
