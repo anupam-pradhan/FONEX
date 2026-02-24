@@ -1,5 +1,6 @@
 package com.roycommunication.fonex
 
+import android.accounts.AccountManager
 import android.app.Activity
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
@@ -382,23 +383,42 @@ class DeviceLockManager(private val context: Context) {
     }
 
     private fun allowNormalGoogleAccounts() {
-        try {
-            devicePolicyManager.clearUserRestriction(
-                adminComponent,
-                UserManager.DISALLOW_MODIFY_ACCOUNTS
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not clear account-modification restriction: ${e.message}")
+        // Keep account sign-in open for personal Google accounts while retaining
+        // EMI-related reset/uninstall restrictions.
+        val accountRestrictions = listOf(
+            UserManager.DISALLOW_MODIFY_ACCOUNTS,
+            UserManager.DISALLOW_CONFIG_CREDENTIALS
+        )
+        accountRestrictions.forEach { restriction ->
+            try {
+                devicePolicyManager.clearUserRestriction(adminComponent, restriction)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not clear restriction '$restriction': ${e.message}")
+            }
         }
 
+        val accountTypes = mutableSetOf(
+            GOOGLE_ACCOUNT_TYPE,
+            "com.google.work",
+            "com.android.exchange"
+        )
         try {
-            devicePolicyManager.setAccountManagementDisabled(
-                adminComponent,
-                GOOGLE_ACCOUNT_TYPE,
-                false
-            )
+            val authenticators = AccountManager.get(context).authenticatorTypes
+            authenticators.forEach { accountTypes.add(it.type) }
         } catch (e: Exception) {
-            Log.w(TAG, "Could not enable Google account management: ${e.message}")
+            Log.w(TAG, "Could not enumerate authenticator account types: ${e.message}")
+        }
+
+        accountTypes.forEach { accountType ->
+            try {
+                devicePolicyManager.setAccountManagementDisabled(
+                    adminComponent,
+                    accountType,
+                    false
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not enable account management for '$accountType': ${e.message}")
+            }
         }
     }
 }
