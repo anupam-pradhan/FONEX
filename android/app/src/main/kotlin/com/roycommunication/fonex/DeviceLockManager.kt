@@ -1,10 +1,12 @@
-package com.roycommunication.fonex
+spackage com.roycommunication.fonex
 
 import android.accounts.AccountManager
 import android.app.Activity
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.os.Build
 import android.provider.Settings
@@ -335,12 +337,22 @@ class DeviceLockManager(private val context: Context) {
                     // Re-apply restrictions if not paid.
                     devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
                     devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+                    try {
+                        devicePolicyManager.addUserRestriction(adminComponent, RESTRICTION_NO_SET_WALLPAPER)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not enforce wallpaper change block: ${e.message}")
+                    }
                     Log.i(TAG, "Factory reset blocking enforced (EMI not paid)")
                     true
                 } else {
                     // Remove restrictions only after full payment.
                     devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
                     devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
+                    try {
+                        devicePolicyManager.clearUserRestriction(adminComponent, RESTRICTION_NO_SET_WALLPAPER)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not clear wallpaper change block: ${e.message}")
+                    }
                     Log.i(TAG, "Factory reset allowed (EMI paid in full)")
                     false
                 }
@@ -349,6 +361,42 @@ class DeviceLockManager(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error enforcing factory reset block: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Force FONEX as HOME launcher while EMI is unpaid so warning UI cannot be removed.
+     * Clears the persistent HOME mapping once paid in full.
+     */
+    fun enforceHomeLauncher(unpaidMode: Boolean): Boolean {
+        return try {
+            if (!isDeviceOwner()) return false
+
+            // Always clear previous mapping first to avoid stale state.
+            devicePolicyManager.clearPackagePersistentPreferredActivities(
+                adminComponent,
+                context.packageName
+            )
+
+            if (unpaidMode) {
+                val filter = IntentFilter(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    addCategory(Intent.CATEGORY_DEFAULT)
+                }
+                val homeActivity = ComponentName(context, MainActivity::class.java)
+                devicePolicyManager.addPersistentPreferredActivity(
+                    adminComponent,
+                    filter,
+                    homeActivity
+                )
+                Log.i(TAG, "Persistent HOME launcher enforced for unpaid mode")
+            } else {
+                Log.i(TAG, "Persistent HOME launcher cleared (paid mode)")
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to enforce HOME launcher policy: ${e.message}", e)
             false
         }
     }

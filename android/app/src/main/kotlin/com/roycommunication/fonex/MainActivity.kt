@@ -1,5 +1,6 @@
 package com.roycommunication.fonex
 
+import android.appwidget.AppWidgetManager
 import android.app.WallpaperManager
 import android.os.Bundle
 import android.util.Log
@@ -49,6 +50,7 @@ class MainActivity : FlutterActivity() {
         private const val KEY_OWNER_PIN = "owner_pin"
         private const val DEFAULT_PIN = "1234"
         private const val ORIGINAL_WALLPAPER_FILE = "original_system_wallpaper.png"
+        private const val KEY_WIDGET_PIN_REQUESTED = "emi_widget_pin_requested"
         private const val SUPPORT_STORE_NAME = "Roy Communication"
         private const val SUPPORT_PHONE_1 = "+91 8388855549"
         private const val SUPPORT_PHONE_2 = "+91 9635252455"
@@ -70,6 +72,7 @@ class MainActivity : FlutterActivity() {
         // Ensure reset/uninstall protection persists across app restarts.
         if (deviceLockManager.isDeviceOwner()) {
             deviceLockManager.enforceFactoryResetBlock()
+            deviceLockManager.enforceHomeLauncher(unpaidMode = !paidInFull)
 
             // If device was locked before (e.g., after reboot), re-engage lock task
             if (deviceLockManager.isDeviceLocked()) {
@@ -84,6 +87,10 @@ class MainActivity : FlutterActivity() {
         } else {
             restoreOriginalSystemWallpaper()
         }
+        refreshHomeWarningWidget()
+        if (!paidInFull) {
+            requestPinWarningWidgetIfSupported()
+        }
     }
 
     override fun onResume() {
@@ -91,13 +98,16 @@ class MainActivity : FlutterActivity() {
         if (deviceLockManager.isDeviceOwner()) {
             // Re-apply unpaid protections and account-login allowance on every resume.
             deviceLockManager.enforceFactoryResetBlock()
+            deviceLockManager.enforceHomeLauncher(unpaidMode = !isPaidInFull())
         }
         if (isPaidInFull()) {
             restoreOriginalSystemWallpaper()
         } else {
             // Keep system wallpaper unchanged for unpaid mode; launcher warning is shown as UI widget.
             restoreOriginalSystemWallpaper()
+            requestPinWarningWidgetIfSupported()
         }
+        refreshHomeWarningWidget()
     }
     
     override fun onDestroy() {
@@ -265,6 +275,9 @@ class MainActivity : FlutterActivity() {
                     val paid = call.argument<Boolean>("paid") ?: false
                     val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
                     prefs.edit().putBoolean("is_paid_in_full", paid).apply()
+                    if (deviceLockManager.isDeviceOwner()) {
+                        deviceLockManager.enforceHomeLauncher(unpaidMode = !paid)
+                    }
                     if (paid) {
                         // Remove lock mode and restrictions once payment is fully completed.
                         deviceLockManager.disableDeviceLock(this)
@@ -278,7 +291,9 @@ class MainActivity : FlutterActivity() {
                         // Re-enforce restrictions if payment status changes
                         deviceLockManager.enforceFactoryResetBlock()
                         restoreOriginalSystemWallpaper()
+                        requestPinWarningWidgetIfSupported()
                     }
+                    refreshHomeWarningWidget()
                     result.success(true)
                 }
                 
@@ -435,6 +450,36 @@ class MainActivity : FlutterActivity() {
     private fun isPaidInFull(): Boolean {
         val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
         return prefs.getBoolean("is_paid_in_full", false)
+    }
+
+    private fun refreshHomeWarningWidget() {
+        try {
+            FonexWarningWidgetProvider.updateAll(applicationContext)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to refresh EMI widget: ${e.message}")
+        }
+    }
+
+    private fun requestPinWarningWidgetIfSupported() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        try {
+            val appWidgetManager = AppWidgetManager.getInstance(applicationContext)
+            if (!appWidgetManager.isRequestPinAppWidgetSupported) return
+
+            val provider = ComponentName(applicationContext, FonexWarningWidgetProvider::class.java)
+            val existing = appWidgetManager.getAppWidgetIds(provider)
+            if (existing.isNotEmpty()) return
+
+            val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+            if (prefs.getBoolean(KEY_WIDGET_PIN_REQUESTED, false)) return
+
+            val requested = appWidgetManager.requestPinAppWidget(provider, null, null)
+            if (requested) {
+                prefs.edit().putBoolean(KEY_WIDGET_PIN_REQUESTED, true).apply()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to request EMI widget pin: ${e.message}")
+        }
     }
 
     private fun drawWarningBanner(base: Bitmap): Bitmap {
