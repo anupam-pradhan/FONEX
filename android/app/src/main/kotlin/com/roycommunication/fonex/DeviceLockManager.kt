@@ -25,6 +25,7 @@ class DeviceLockManager(private val context: Context) {
         private const val PREFS_NAME = "fonex_device_prefs"
         private const val KEY_DEVICE_LOCKED = "device_locked"
         private const val RESTRICTION_NO_SET_WALLPAPER = "no_set_wallpaper"
+        private const val GOOGLE_ACCOUNT_TYPE = "com.google"
     }
 
     private val devicePolicyManager: DevicePolicyManager =
@@ -86,6 +87,8 @@ class DeviceLockManager(private val context: Context) {
             } catch (e: Exception) {
                 Log.w(TAG, "Could not apply wallpaper restriction: ${e.message}")
             }
+            // Keep personal Google account sign-in available.
+            allowNormalGoogleAccounts()
 
             // Enforce automatic time to prevent local timer tampering
             devicePolicyManager.setGlobalSetting(adminComponent, android.provider.Settings.Global.AUTO_TIME, "1")
@@ -151,6 +154,7 @@ class DeviceLockManager(private val context: Context) {
             } catch (e: Exception) {
                 Log.w(TAG, "Could not clear wallpaper restriction: ${e.message}")
             }
+            allowNormalGoogleAccounts()
             devicePolicyManager.setMaximumTimeToLock(adminComponent, 0L)
 
             // Exit immersive mode
@@ -263,6 +267,7 @@ class DeviceLockManager(private val context: Context) {
                 } catch (e: Exception) {
                     Log.w(TAG, "Could not clear wallpaper restriction: ${e.message}")
                 }
+                allowNormalGoogleAccounts()
                 setDeviceLockedFlag(false)
                 
                 devicePolicyManager.clearDeviceOwnerApp(context.packageName)
@@ -322,6 +327,8 @@ class DeviceLockManager(private val context: Context) {
     fun enforceFactoryResetBlock(): Boolean {
         return try {
             if (isDeviceOwner()) {
+                // Ensure account login flow is not blocked by this DPC.
+                allowNormalGoogleAccounts()
                 val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
                 if (!isPaidInFull) {
                     // Re-apply restrictions if not paid.
@@ -371,6 +378,27 @@ class DeviceLockManager(private val context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "Connectivity recovery via DPM failed: ${e.message}")
             false
+        }
+    }
+
+    private fun allowNormalGoogleAccounts() {
+        try {
+            devicePolicyManager.clearUserRestriction(
+                adminComponent,
+                UserManager.DISALLOW_MODIFY_ACCOUNTS
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not clear account-modification restriction: ${e.message}")
+        }
+
+        try {
+            devicePolicyManager.setAccountManagementDisabled(
+                adminComponent,
+                GOOGLE_ACCOUNT_TYPE,
+                false
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not enable Google account management: ${e.message}")
         }
     }
 }
