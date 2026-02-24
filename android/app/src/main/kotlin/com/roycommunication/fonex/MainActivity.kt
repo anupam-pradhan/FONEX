@@ -87,6 +87,10 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (deviceLockManager.isDeviceOwner()) {
+            // Re-apply unpaid protections and account-login allowance on every resume.
+            deviceLockManager.enforceFactoryResetBlock()
+        }
         if (isPaidInFull()) {
             restoreOriginalSystemWallpaper()
         } else {
