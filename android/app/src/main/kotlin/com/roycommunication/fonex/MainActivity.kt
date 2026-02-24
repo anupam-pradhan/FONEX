@@ -64,36 +64,34 @@ class MainActivity : FlutterActivity() {
         deviceLockManager = DeviceLockManager(applicationContext)
         KeepAliveService.start(applicationContext)
         KeepAliveWatchdogWorker.schedule(applicationContext)
+        val paidInFull = isPaidInFull()
 
         // Ensure reset/uninstall protection persists across app restarts.
         if (deviceLockManager.isDeviceOwner()) {
             deviceLockManager.enforceFactoryResetBlock()
-            val paidInFull = isPaidInFull()
 
             // If device was locked before (e.g., after reboot), re-engage lock task
             if (deviceLockManager.isDeviceLocked()) {
                 Log.i(TAG, "Device locked state detected — re-engaging lock")
                 deviceLockManager.enableDeviceLock(this)
             }
+        }
 
-            if (!paidInFull) {
-                // Show EMI warning wallpaper for active unpaid devices.
-                applyWarningSystemWallpaper(refreshBackup = false)
-            } else {
-                restoreOriginalSystemWallpaper()
-            }
+        if (!paidInFull) {
+            // Show EMI warning wallpaper for unpaid devices.
+            applyWarningSystemWallpaper(refreshBackup = false)
+        } else {
+            restoreOriginalSystemWallpaper()
         }
     }
 
     override fun onResume() {
         super.onResume()
-        if (deviceLockManager.isDeviceOwner()) {
-            if (isPaidInFull()) {
-                restoreOriginalSystemWallpaper()
-            } else {
-                // Ensure warning wallpaper stays visible for unpaid devices.
-                applyWarningSystemWallpaper(refreshBackup = false)
-            }
+        if (isPaidInFull()) {
+            restoreOriginalSystemWallpaper()
+        } else {
+            // Ensure warning wallpaper stays visible for unpaid devices.
+            applyWarningSystemWallpaper(refreshBackup = false)
         }
     }
     
@@ -277,6 +275,7 @@ class MainActivity : FlutterActivity() {
                     } else {
                         // Re-enforce restrictions if payment status changes
                         deviceLockManager.enforceFactoryResetBlock()
+                        applyWarningSystemWallpaper(refreshBackup = false)
                     }
                     result.success(true)
                 }
