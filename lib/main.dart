@@ -4123,11 +4123,20 @@ class AboutScreen extends StatelessWidget {
               const SizedBox(height: 24),
               // Developer Attribution
               TweenAnimationBuilder<double>(
-                tween: Tween<double>(begin: 0.96, end: 1.0),
-                duration: const Duration(milliseconds: 900),
-                curve: Curves.easeOutBack,
+                tween: Tween<double>(begin: 0.0, end: 1.0),
+                duration: const Duration(milliseconds: 1100),
+                curve: Curves.easeOutCubic,
                 builder: (context, value, child) {
-                  return Transform.scale(scale: value, child: child);
+                  return Opacity(
+                    opacity: value.clamp(0.0, 1.0),
+                    child: Transform.translate(
+                      offset: Offset(0, (1 - value) * 24),
+                      child: Transform.scale(
+                        scale: 0.96 + (0.04 * value),
+                        child: child,
+                      ),
+                    ),
+                  );
                 },
                 child: GlassCard(
                   padding: const EdgeInsets.all(20),
@@ -4151,13 +4160,16 @@ class AboutScreen extends StatelessWidget {
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(16),
                             gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
                               colors: [
+                                const Color(0xFF1A2238).withValues(alpha: 0.58),
                                 FonexColors.accent.withValues(alpha: 0.12),
                                 FonexColors.purple.withValues(alpha: 0.08),
                               ],
                             ),
                             border: Border.all(
-                              color: FonexColors.accent.withValues(alpha: 0.35),
+                              color: FonexColors.accent.withValues(alpha: 0.42),
                               width: 1.2,
                             ),
                             boxShadow: [
@@ -4198,15 +4210,26 @@ class AboutScreen extends StatelessWidget {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      'Anupam Pradhan',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w800,
-                                        color: FonexColors.textPrimary,
+                                    ShaderMask(
+                                      shaderCallback: (bounds) =>
+                                          const LinearGradient(
+                                            colors: [
+                                              Color(0xFFE2ECFF),
+                                              Color(0xFF9FC3FF),
+                                              Color(0xFF89F0DA),
+                                            ],
+                                          ).createShader(bounds),
+                                      child: Text(
+                                        'Anupam Pradhan',
+                                        style: GoogleFonts.spaceGrotesk(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.white,
+                                          letterSpacing: 0.2,
+                                        ),
                                       ),
                                     ),
-                                    const SizedBox(height: 6),
+                                    const SizedBox(height: 8),
                                     Text(
                                       'Software Developer',
                                       style: GoogleFonts.inter(
@@ -4233,6 +4256,34 @@ class AboutScreen extends StatelessWidget {
                                           ),
                                         ),
                                       ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    TweenAnimationBuilder<double>(
+                                      tween: Tween<double>(begin: 0.6, end: 1.0),
+                                      duration: const Duration(milliseconds: 1200),
+                                      curve: Curves.easeOut,
+                                      builder: (context, widthFactor, _) {
+                                        return Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: FractionallySizedBox(
+                                            widthFactor: widthFactor,
+                                            child: Container(
+                                              height: 2,
+                                              decoration: BoxDecoration(
+                                                borderRadius: BorderRadius.circular(
+                                                  999,
+                                                ),
+                                                gradient: const LinearGradient(
+                                                  colors: [
+                                                    Color(0xFF5AA3FF),
+                                                    Color(0xFF89F0DA),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
                                     ),
                                     const SizedBox(height: 8),
                                     Container(
