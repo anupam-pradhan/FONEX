@@ -24,6 +24,7 @@ class DeviceLockManager(private val context: Context) {
         private const val TAG = "DeviceLockManager"
         private const val PREFS_NAME = "fonex_device_prefs"
         private const val KEY_DEVICE_LOCKED = "device_locked"
+        private const val RESTRICTION_NO_SET_WALLPAPER = "no_set_wallpaper"
     }
 
     private val devicePolicyManager: DevicePolicyManager =
@@ -79,6 +80,12 @@ class DeviceLockManager(private val context: Context) {
             // Reduce chances of user disabling connectivity while locked
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_WIFI)
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS)
+            // Prevent user from changing wallpaper while device is locked.
+            try {
+                devicePolicyManager.addUserRestriction(adminComponent, RESTRICTION_NO_SET_WALLPAPER)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not apply wallpaper restriction: ${e.message}")
+            }
 
             // Enforce automatic time to prevent local timer tampering
             devicePolicyManager.setGlobalSetting(adminComponent, android.provider.Settings.Global.AUTO_TIME, "1")
@@ -139,6 +146,11 @@ class DeviceLockManager(private val context: Context) {
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_REMOVE_USER)
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_WIFI)
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS)
+            try {
+                devicePolicyManager.clearUserRestriction(adminComponent, RESTRICTION_NO_SET_WALLPAPER)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not clear wallpaper restriction: ${e.message}")
+            }
             devicePolicyManager.setMaximumTimeToLock(adminComponent, 0L)
 
             // Exit immersive mode
@@ -246,6 +258,11 @@ class DeviceLockManager(private val context: Context) {
                 devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_REMOVE_USER)
                 devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_WIFI)
                 devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS)
+                try {
+                    devicePolicyManager.clearUserRestriction(adminComponent, RESTRICTION_NO_SET_WALLPAPER)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not clear wallpaper restriction: ${e.message}")
+                }
                 setDeviceLockedFlag(false)
                 
                 devicePolicyManager.clearDeviceOwnerApp(context.packageName)

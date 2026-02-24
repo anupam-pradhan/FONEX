@@ -77,6 +77,14 @@ class MainActivity : FlutterActivity() {
             applyWarningSystemWallpaper(refreshBackup = false)
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        if (deviceLockManager.isDeviceLocked() && deviceLockManager.isDeviceOwner()) {
+            // Ensure warning wallpaper stays visible while locked.
+            applyWarningSystemWallpaper(refreshBackup = false)
+        }
+    }
     
     override fun onDestroy() {
         releaseWakeLock()
