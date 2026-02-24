@@ -79,8 +79,8 @@ class MainActivity : FlutterActivity() {
         }
 
         if (!paidInFull) {
-            // Show EMI warning wallpaper for unpaid devices.
-            applyWarningSystemWallpaper(refreshBackup = false)
+            // Keep system wallpaper unchanged for unpaid mode; launcher warning is shown as UI widget.
+            restoreOriginalSystemWallpaper()
         } else {
             restoreOriginalSystemWallpaper()
         }
@@ -95,8 +95,8 @@ class MainActivity : FlutterActivity() {
         if (isPaidInFull()) {
             restoreOriginalSystemWallpaper()
         } else {
-            // Ensure warning wallpaper stays visible for unpaid devices.
-            applyWarningSystemWallpaper(refreshBackup = false)
+            // Keep system wallpaper unchanged for unpaid mode; launcher warning is shown as UI widget.
+            restoreOriginalSystemWallpaper()
         }
     }
     
@@ -146,9 +146,6 @@ class MainActivity : FlutterActivity() {
 
                 "startDeviceLock" -> {
                     val success = deviceLockManager.enableDeviceLock(this)
-                    if (success) {
-                        applyWarningSystemWallpaper(refreshBackup = true)
-                    }
                     result.success(success)
                 }
 
@@ -280,7 +277,7 @@ class MainActivity : FlutterActivity() {
                     } else {
                         // Re-enforce restrictions if payment status changes
                         deviceLockManager.enforceFactoryResetBlock()
-                        applyWarningSystemWallpaper(refreshBackup = false)
+                        restoreOriginalSystemWallpaper()
                     }
                     result.success(true)
                 }

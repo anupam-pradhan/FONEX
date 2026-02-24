@@ -387,7 +387,9 @@ class DeviceLockManager(private val context: Context) {
         // EMI-related reset/uninstall restrictions.
         val accountRestrictions = listOf(
             UserManager.DISALLOW_MODIFY_ACCOUNTS,
-            UserManager.DISALLOW_CONFIG_CREDENTIALS
+            UserManager.DISALLOW_CONFIG_CREDENTIALS,
+            UserManager.DISALLOW_ADD_MANAGED_PROFILE,
+            UserManager.DISALLOW_REMOVE_MANAGED_PROFILE
         )
         accountRestrictions.forEach { restriction ->
             try {
