@@ -62,5 +62,23 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
     override fun onProfileProvisioningComplete(context: Context, intent: Intent) {
         super.onProfileProvisioningComplete(context, intent)
         Log.i(TAG, "Profile provisioning complete")
+        try {
+            val manager = DeviceLockManager(context.applicationContext)
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
+            manager.enforceFactoryResetBlock()
+            manager.enforceHomeLauncher(unpaidMode = !isPaidInFull)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to apply post-provisioning policies: ${e.message}", e)
+        }
+
+        try {
+            val launchIntent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+            context.startActivity(launchIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch app after provisioning: ${e.message}", e)
+        }
     }
 }
