@@ -836,6 +836,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     await _checkDeviceOwner();
     if (isPaidInFull) {
       await _activatePaidInFullMode(refreshOwnerState: true);
+    } else {
+      await _activateEmiRunningMode(days: storedWindow);
     }
     unawaited(_ensureBackgroundKillProtection(allowUserPrompt: true));
     _deviceHash = await DeviceHashUtil.getDeviceHash();
@@ -984,6 +986,47 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       debugPrint('Paid in full mode applied: restrictions removed');
     } on PlatformException catch (e) {
       debugPrint('Error applying paid in full mode: $e');
+    }
+
+    if (refreshOwnerState) {
+      await _checkDeviceOwner();
+    }
+  }
+
+  Future<void> _activateEmiRunningMode({
+    int? days,
+    bool refreshOwnerState = false,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('is_paid_in_full', false);
+    if (days != null) {
+      final normalizedDays = _normalizeLockWindowDays(days);
+      await prefs.setInt(_keyLockWindowDays, normalizedDays);
+      if (!_isDeviceLocked) {
+        await prefs.setInt(
+          _keyLastVerified,
+          DateTime.now().millisecondsSinceEpoch,
+        );
+      }
+      if (mounted) {
+        setState(() {
+          _lockWindowDays = normalizedDays;
+          if (!_isDeviceLocked) _daysRemaining = normalizedDays;
+        });
+      }
+    }
+
+    if (_isPaidInFull && mounted) {
+      setState(() => _isPaidInFull = false);
+    } else {
+      _isPaidInFull = false;
+    }
+
+    try {
+      await _channel.invokeMethod('setPaidInFull', {'paid': false});
+      debugPrint('EMI running mode applied: launcher warning wallpaper enforced');
+    } on PlatformException catch (e) {
+      debugPrint('Error applying EMI running mode: $e');
     }
 
     if (refreshOwnerState) {
@@ -1226,8 +1269,14 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             response['is_paid_in_full'] == true ||
             response['paid_in_full'] == true ||
             (response['payment_status']?.toString().toLowerCase() == 'paid');
+        final serverDays =
+            _parseServerDays(response['days']) ??
+            _parseServerDays(response['days_remaining']) ??
+            _parseServerDays(response['tenure']);
         if (serverPaidInFull && !_isPaidInFull) {
           await _activatePaidInFullMode(refreshOwnerState: true);
+        } else if (!serverPaidInFull) {
+          await _activateEmiRunningMode(days: serverDays);
         }
 
         final rawAction = response['action'] as String? ?? 'none';
@@ -1248,6 +1297,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             final days =
                 _parseServerDays(response['days']) ??
                 _parseServerDays(response['days_remaining']) ??
+                _parseServerDays(response['tenure']) ??
                 _lockAfterDays;
             final prefs = await SharedPreferences.getInstance();
             await prefs.setInt(_keyLockWindowDays, days);
@@ -1270,9 +1320,6 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             await _activatePaidInFullMode(refreshOwnerState: true);
             break;
           case 'none':
-            final serverDays =
-                _parseServerDays(response['days']) ??
-                _parseServerDays(response['days_remaining']);
             if (serverDays != null) {
               final prefs = await SharedPreferences.getInstance();
               await prefs.setInt(_keyLockWindowDays, serverDays);
