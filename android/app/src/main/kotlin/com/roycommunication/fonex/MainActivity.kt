@@ -343,8 +343,8 @@ class MainActivity : FlutterActivity() {
         try {
             ensureOriginalWallpaperBackup(forceRefresh = refreshBackup)
             val base = loadOriginalWallpaperBitmap() ?: loadCurrentWallpaperBitmap() ?: run {
-                Log.w(TAG, "Skipping warning wallpaper: no base wallpaper available")
-                return
+                Log.w(TAG, "No readable wallpaper source; using generated fallback base")
+                createFallbackWallpaperBaseBitmap()
             }
             val warningBitmap = drawWarningBanner(base)
             setSystemWallpaper(warningBitmap)
@@ -407,6 +407,31 @@ class MainActivity : FlutterActivity() {
         val backupFile = File(filesDir, ORIGINAL_WALLPAPER_FILE)
         if (!backupFile.exists()) return null
         return BitmapFactory.decodeFile(backupFile.absolutePath)
+    }
+
+    private fun createFallbackWallpaperBaseBitmap(): Bitmap {
+        val metrics = resources.displayMetrics
+        val width = maxOf(metrics.widthPixels, 1080)
+        val height = maxOf(metrics.heightPixels, 1920)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = LinearGradient(
+                0f,
+                0f,
+                0f,
+                height.toFloat(),
+                intArrayOf(
+                    Color.argb(255, 10, 16, 28),
+                    Color.argb(255, 24, 33, 53),
+                    Color.argb(255, 11, 17, 30)
+                ),
+                null,
+                Shader.TileMode.CLAMP
+            )
+        }
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+        return bitmap
     }
 
     private fun isPaidInFull(): Boolean {
