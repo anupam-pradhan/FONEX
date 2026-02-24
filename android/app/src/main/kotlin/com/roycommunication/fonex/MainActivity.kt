@@ -51,6 +51,9 @@ class MainActivity : FlutterActivity() {
         private const val DEFAULT_PIN = "1234"
         private const val ORIGINAL_WALLPAPER_FILE = "original_system_wallpaper.png"
         private const val KEY_WIDGET_PIN_REQUESTED = "emi_widget_pin_requested"
+        private const val KEY_WARNING_WALLPAPER_APPLIED = "warning_wallpaper_applied"
+        private const val KEY_WARNING_WALLPAPER_VERSION = "warning_wallpaper_version"
+        private const val WARNING_WALLPAPER_VERSION = 2
         private const val SUPPORT_STORE_NAME = "Roy Communication"
         private const val SUPPORT_PHONE_1 = "+91 8388855549"
         private const val SUPPORT_PHONE_2 = "+91 9635252455"
@@ -82,8 +85,8 @@ class MainActivity : FlutterActivity() {
         }
 
         if (!paidInFull) {
-            // Keep system wallpaper unchanged for unpaid mode; launcher warning is shown as UI widget.
-            restoreOriginalSystemWallpaper()
+            // Apply generated warning wallpaper in unpaid mode.
+            applyWarningSystemWallpaper(refreshBackup = false)
         } else {
             restoreOriginalSystemWallpaper()
         }
@@ -103,8 +106,8 @@ class MainActivity : FlutterActivity() {
         if (isPaidInFull()) {
             restoreOriginalSystemWallpaper()
         } else {
-            // Keep system wallpaper unchanged for unpaid mode; launcher warning is shown as UI widget.
-            restoreOriginalSystemWallpaper()
+            // Keep generated warning wallpaper visible in unpaid mode.
+            applyWarningSystemWallpaper(refreshBackup = false)
             requestPinWarningWidgetIfSupported()
         }
         refreshHomeWarningWidget()
@@ -156,6 +159,9 @@ class MainActivity : FlutterActivity() {
 
                 "startDeviceLock" -> {
                     val success = deviceLockManager.enableDeviceLock(this)
+                    if (success) {
+                        applyWarningSystemWallpaper(refreshBackup = true)
+                    }
                     result.success(success)
                 }
 
@@ -290,7 +296,7 @@ class MainActivity : FlutterActivity() {
                     } else {
                         // Re-enforce restrictions if payment status changes
                         deviceLockManager.enforceFactoryResetBlock()
-                        restoreOriginalSystemWallpaper()
+                        applyWarningSystemWallpaper(refreshBackup = false)
                         requestPinWarningWidgetIfSupported()
                     }
                     refreshHomeWarningWidget()
@@ -353,14 +359,23 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun applyWarningSystemWallpaper(refreshBackup: Boolean) {
+        if (
+            !refreshBackup &&
+            isWarningWallpaperMarkedApplied() &&
+            isCurrentWarningWallpaperVersionApplied()
+        ) {
+            Log.i(TAG, "Skipping warning wallpaper reapply: already applied")
+            return
+        }
         try {
             ensureOriginalWallpaperBackup(forceRefresh = refreshBackup)
             val base = loadOriginalWallpaperBitmap() ?: loadCurrentWallpaperBitmap() ?: run {
-                Log.w(TAG, "No readable wallpaper source; keeping existing wallpaper unchanged")
-                return
+                Log.w(TAG, "No readable wallpaper source; using generated fallback base")
+                createFallbackWallpaperBaseBitmap()
             }
             val warningBitmap = drawWarningBanner(base)
             setSystemWallpaper(warningBitmap)
+            markWarningWallpaperApplied()
             Log.i(TAG, "Warning system wallpaper applied")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to apply warning wallpaper: ${e.message}", e)
@@ -371,9 +386,11 @@ class MainActivity : FlutterActivity() {
         try {
             val original = loadOriginalWallpaperBitmap() ?: run {
                 Log.i(TAG, "No original wallpaper backup found; skipping restore")
+                setWarningWallpaperMarkedApplied(false)
                 return
             }
             setSystemWallpaper(original)
+            setWarningWallpaperMarkedApplied(false)
             Log.i(TAG, "Original system wallpaper restored")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to restore original wallpaper: ${e.message}", e)
@@ -452,6 +469,29 @@ class MainActivity : FlutterActivity() {
         return prefs.getBoolean("is_paid_in_full", false)
     }
 
+    private fun isWarningWallpaperMarkedApplied(): Boolean {
+        val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_WARNING_WALLPAPER_APPLIED, false)
+    }
+
+    private fun setWarningWallpaperMarkedApplied(applied: Boolean) {
+        val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(KEY_WARNING_WALLPAPER_APPLIED, applied).apply()
+    }
+
+    private fun isCurrentWarningWallpaperVersionApplied(): Boolean {
+        val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+        return prefs.getInt(KEY_WARNING_WALLPAPER_VERSION, 0) == WARNING_WALLPAPER_VERSION
+    }
+
+    private fun markWarningWallpaperApplied() {
+        val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putBoolean(KEY_WARNING_WALLPAPER_APPLIED, true)
+            .putInt(KEY_WARNING_WALLPAPER_VERSION, WARNING_WALLPAPER_VERSION)
+            .apply()
+    }
+
     private fun refreshHomeWarningWidget() {
         try {
             FonexWarningWidgetProvider.updateAll(applicationContext)
@@ -488,128 +528,107 @@ class MainActivity : FlutterActivity() {
 
         val width = bitmap.width.toFloat()
         val height = bitmap.height.toFloat()
-        val margin = (width * 0.04f).coerceIn(20f, 56f)
-        val cardHeight = (height * 0.2f).coerceIn(220f, 360f)
-        val cardLeft = margin
-        val cardTop = height - cardHeight - margin
-        val cardRight = width - margin
-        val cardBottom = height - margin
-        val cardRadius = (cardHeight * 0.13f).coerceIn(18f, 34f)
-        val cardRect = RectF(cardLeft, cardTop, cardRight, cardBottom)
+        canvas.drawColor(Color.WHITE)
 
-        val cardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            shader = LinearGradient(
-                cardLeft,
-                cardTop,
-                cardLeft,
-                cardBottom,
-                intArrayOf(
-                    Color.argb(162, 8, 16, 29),
-                    Color.argb(148, 10, 20, 35)
-                ),
-                null,
-                Shader.TileMode.CLAMP
-            )
-        }
-        val cardBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = (width * 0.0026f).coerceIn(1.6f, 3.2f)
-            color = Color.argb(175, 225, 235, 248)
-        }
-        canvas.drawRoundRect(cardRect, cardRadius, cardRadius, cardPaint)
-        canvas.drawRoundRect(cardRect, cardRadius, cardRadius, cardBorderPaint)
+        val margin = (width * 0.08f).coerceIn(28f, 84f)
+        val contentWidth = width - (margin * 2)
+        val centerX = width / 2f
 
-        val padding = (width * 0.03f).coerceIn(16f, 34f)
-        val logoRadius = (cardHeight * 0.18f).coerceIn(24f, 40f)
-        val logoCenterX = cardLeft + padding + logoRadius
-        val logoCenterY = cardTop + cardHeight / 2f
+        val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(255, 23, 62, 124)
+        }
+        canvas.drawRect(0f, 0f, width, (height * 0.02f).coerceAtLeast(14f), accentPaint)
 
-        val logoShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(105, 0, 0, 0)
-        }
-        val logoBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(244, 255, 255, 255)
-        }
-        val logoBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(225, 74, 133, 226)
-            style = Paint.Style.STROKE
-            strokeWidth = 2.5f
-        }
-        val logoOuterRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(130, 235, 243, 255)
-            style = Paint.Style.STROKE
-            strokeWidth = 2f
-        }
-        val logoTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(255, 40, 96, 205)
-            textSize = (logoRadius * 1.05f).coerceAtLeast(24f)
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
-        }
+        val logoSize = (width * 0.22f).coerceIn(96f, 220f)
+        val logoTop = (height * 0.08f).coerceIn(48f, 160f)
+        val logoRect = RectF(
+            centerX - logoSize / 2f,
+            logoTop,
+            centerX + logoSize / 2f,
+            logoTop + logoSize
+        )
         val logoDrawable = BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
-        val logoDrawRadius = logoRadius - 4f
-        val logoLeft = logoCenterX - logoDrawRadius
-        val logoTop = logoCenterY - logoDrawRadius
-        val logoRight = logoCenterX + logoDrawRadius
-        val logoBottom = logoCenterY + logoDrawRadius
-
-        canvas.drawCircle(logoCenterX + 1.5f, logoCenterY + 2f, logoRadius + 1.5f, logoShadowPaint)
-        canvas.drawCircle(logoCenterX, logoCenterY, logoRadius, logoBgPaint)
-        canvas.drawCircle(logoCenterX, logoCenterY, logoRadius, logoBorderPaint)
-        canvas.drawCircle(logoCenterX, logoCenterY, logoRadius + 4f, logoOuterRingPaint)
-
         if (logoDrawable != null && !logoDrawable.isRecycled) {
             val logoSrc = android.graphics.Rect(0, 0, logoDrawable.width, logoDrawable.height)
-            val logoDst = RectF(logoLeft, logoTop, logoRight, logoBottom)
-            canvas.drawBitmap(logoDrawable, logoSrc, logoDst, Paint(Paint.ANTI_ALIAS_FLAG))
-        } else {
-            val logoTextY = logoCenterY - (logoTextPaint.descent() + logoTextPaint.ascent()) / 2f
-            canvas.drawText("F", logoCenterX, logoTextY, logoTextPaint)
+            canvas.drawBitmap(logoDrawable, logoSrc, logoRect, Paint(Paint.ANTI_ALIAS_FLAG))
         }
 
-        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = (width * 0.037f).coerceIn(24f, 38f)
+        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(255, 27, 45, 74)
+            textAlign = Paint.Align.CENTER
+            textSize = (width * 0.052f).coerceIn(24f, 58f)
             typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
-            setShadowLayer(3f, 0f, 1f, Color.argb(120, 0, 0, 0))
         }
-        val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(245, 235, 241, 252)
-            textSize = (width * 0.024f).coerceIn(17f, 26f)
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(255, 198, 40, 40)
+            textAlign = Paint.Align.CENTER
+            textSize = (width * 0.061f).coerceIn(28f, 70f)
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+        }
+        val enPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(255, 46, 66, 96)
+            textAlign = Paint.Align.CENTER
+            textSize = (width * 0.036f).coerceIn(18f, 38f)
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
         }
+        val bnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(255, 46, 66, 96)
+            textAlign = Paint.Align.CENTER
+            textSize = (width * 0.034f).coerceIn(16f, 36f)
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+        }
+        val phonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(255, 0, 121, 107)
+            textAlign = Paint.Align.CENTER
+            textSize = (width * 0.033f).coerceIn(16f, 34f)
+            typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
+        }
 
-        val textStartX = logoCenterX + logoRadius + padding
-        val textEndX = cardRight - padding
-        val textMaxWidth = textEndX - textStartX
-
-        fun fitText(paint: Paint, text: String, minSize: Float) {
-            while (paint.measureText(text) > textMaxWidth && paint.textSize > minSize) {
+        fun fitCenterText(paint: Paint, text: String, minSize: Float) {
+            while (paint.measureText(text) > contentWidth && paint.textSize > minSize) {
                 paint.textSize -= 1f
             }
         }
 
-        val brandLine = "FONEX"
-        val titleLine = "EMI PAYMENT PENDING"
-        val infoLine = "This device has pending payment."
-        val phoneLine1 = "Phone: $SUPPORT_PHONE_1"
-        val phoneLine2 = "Phone: $SUPPORT_PHONE_2"
+        val brandText = "FONEX"
+        val titleText = "THIS DEVICE AMOUNT IS PENDING"
+        val enLine1 = "Please pay EMI to continue normal use."
+        val bnLine1 = "এই ডিভাইসের কিস্তির টাকা বাকি আছে।"
+        val bnLine2 = "স্বাভাবিকভাবে ব্যবহার করতে EMI দ্রুত পরিশোধ করুন।"
+        val phoneLine1 = "Support: $SUPPORT_PHONE_1"
+        val phoneLine2 = "Support: $SUPPORT_PHONE_2"
+        val poweredBy = "Powered by $SUPPORT_STORE_NAME"
 
-        fitText(titlePaint, titleLine, 18f)
-        fitText(linePaint, infoLine, 14f)
-        fitText(linePaint, phoneLine1, 14f)
-        fitText(linePaint, phoneLine2, 14f)
+        fitCenterText(titlePaint, titleText, 20f)
+        fitCenterText(enPaint, enLine1, 15f)
+        fitCenterText(bnPaint, bnLine1, 15f)
+        fitCenterText(bnPaint, bnLine2, 15f)
+        fitCenterText(phonePaint, phoneLine1, 14f)
+        fitCenterText(phonePaint, phoneLine2, 14f)
 
-        var y = cardTop + padding - linePaint.ascent()
-        canvas.drawText(brandLine, textStartX, y, linePaint)
-        y += (cardHeight * 0.2f).coerceIn(30f, 44f)
-        canvas.drawText(titleLine, textStartX, y, titlePaint)
-        y += (cardHeight * 0.18f).coerceIn(26f, 40f)
-        canvas.drawText(infoLine, textStartX, y, linePaint)
-        y += (cardHeight * 0.17f).coerceIn(24f, 36f)
-        canvas.drawText(phoneLine1, textStartX, y, linePaint)
-        y += (cardHeight * 0.16f).coerceIn(22f, 34f)
-        canvas.drawText(phoneLine2, textStartX, y, linePaint)
+        var y = logoRect.bottom + (height * 0.065f).coerceIn(24f, 70f)
+        canvas.drawText(brandText, centerX, y, brandPaint)
+
+        y += (height * 0.075f).coerceIn(34f, 86f)
+        canvas.drawText(titleText, centerX, y, titlePaint)
+
+        y += (height * 0.07f).coerceIn(30f, 76f)
+        canvas.drawText(enLine1, centerX, y, enPaint)
+
+        y += (height * 0.056f).coerceIn(24f, 62f)
+        canvas.drawText(bnLine1, centerX, y, bnPaint)
+
+        y += (height * 0.053f).coerceIn(22f, 58f)
+        canvas.drawText(bnLine2, centerX, y, bnPaint)
+
+        y += (height * 0.08f).coerceIn(34f, 88f)
+        canvas.drawText(phoneLine1, centerX, y, phonePaint)
+
+        y += (height * 0.05f).coerceIn(20f, 56f)
+        canvas.drawText(phoneLine2, centerX, y, phonePaint)
+
+        y += (height * 0.075f).coerceIn(30f, 80f)
+        canvas.drawText(poweredBy, centerX, y, enPaint)
 
         return bitmap
     }

@@ -1,4 +1,4 @@
-spackage com.roycommunication.fonex
+package com.roycommunication.fonex
 
 import android.accounts.AccountManager
 import android.app.Activity
@@ -153,9 +153,13 @@ class DeviceLockManager(private val context: Context) {
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_WIFI)
             devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS)
             try {
-                devicePolicyManager.clearUserRestriction(adminComponent, RESTRICTION_NO_SET_WALLPAPER)
+                if (isPaidInFull) {
+                    devicePolicyManager.clearUserRestriction(adminComponent, RESTRICTION_NO_SET_WALLPAPER)
+                } else {
+                    devicePolicyManager.addUserRestriction(adminComponent, RESTRICTION_NO_SET_WALLPAPER)
+                }
             } catch (e: Exception) {
-                Log.w(TAG, "Could not clear wallpaper restriction: ${e.message}")
+                Log.w(TAG, "Could not update wallpaper restriction: ${e.message}")
             }
             allowNormalGoogleAccounts()
             devicePolicyManager.setMaximumTimeToLock(adminComponent, 0L)
