@@ -29,6 +29,7 @@ const int _cooldownSeconds = FonexConfig.cooldownSeconds;
 const String _keyLastVerified = FonexConfig.keyLastVerified;
 const String _keyDeviceLocked = FonexConfig.keyDeviceLocked;
 const String _keySimAbsentSince = FonexConfig.keySimAbsentSince;
+const String _keyLockWindowDays = 'lock_window_days';
 const String _serverBaseUrl = FonexConfig.serverBaseUrl;
 const String _supportPhone1 = FonexConfig.supportPhone1;
 const String _supportPhone2 = FonexConfig.supportPhone2;
@@ -713,6 +714,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   bool _isLoading = true;
   bool _isPaidInFull = false;
   int _daysRemaining = 30;
+  int _lockWindowDays = _lockAfterDays;
   bool _isServerConnected = false;
   String _serverStatusMessage = 'Connecting...';
   DateTime? _lastServerSync;
@@ -826,11 +828,15 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
   Future<void> _initialize() async {
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool('is_paid_in_full') == true) {
-      if (mounted) setState(() => _isPaidInFull = true);
-    }
+    final isPaidInFull = prefs.getBool('is_paid_in_full') == true;
+    final storedWindow = _readLockWindowDays(prefs);
+    _lockWindowDays = storedWindow;
+    _daysRemaining = storedWindow;
 
     await _checkDeviceOwner();
+    if (isPaidInFull) {
+      await _activatePaidInFullMode(refreshOwnerState: true);
+    }
     unawaited(_ensureBackgroundKillProtection(allowUserPrompt: true));
     _deviceHash = await DeviceHashUtil.getDeviceHash();
     _realtimeDeviceId = _deviceHash;
@@ -841,6 +847,31 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     // Attempt server check-in (non-blocking, offline-safe)
     unawaited(_serverCheckIn());
     if (mounted) setState(() => _isLoading = false);
+  }
+
+  int _normalizeLockWindowDays(int days) {
+    if (days < 1) return 1;
+    if (days > 365) return 365;
+    return days;
+  }
+
+  int _readLockWindowDays(SharedPreferences prefs) {
+    final stored = prefs.getInt(_keyLockWindowDays) ?? _lockAfterDays;
+    return _normalizeLockWindowDays(stored);
+  }
+
+  int? _parseServerDays(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is int) return _normalizeLockWindowDays(raw);
+    if (raw is num) return _normalizeLockWindowDays(raw.toInt());
+    if (raw is String) {
+      final trimmed = raw.trim();
+      final parsed =
+          int.tryParse(trimmed) ??
+          int.tryParse(RegExp(r'-?\d+').firstMatch(trimmed)?.group(0) ?? '');
+      if (parsed != null) return _normalizeLockWindowDays(parsed);
+    }
+    return null;
   }
 
   Future<void> _checkDeviceOwner() async {
@@ -855,6 +886,21 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
   Future<void> _checkTimerAndLock() async {
     final prefs = await SharedPreferences.getInstance();
+    final lockWindowDays = _readLockWindowDays(prefs);
+    _lockWindowDays = lockWindowDays;
+    if (_isPaidInFull || prefs.getBool('is_paid_in_full') == true) {
+      await prefs.setBool(_keyDeviceLocked, false);
+      await prefs.remove(_keySimAbsentSince);
+      if (mounted) {
+        setState(() {
+          _isPaidInFull = true;
+          _isDeviceLocked = false;
+          _daysRemaining = lockWindowDays;
+        });
+      }
+      return;
+    }
+
     final lastVerifiedMs = prefs.getInt(_keyLastVerified);
 
     if (lastVerifiedMs == null) {
@@ -867,7 +913,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       if (mounted) {
         setState(() {
           _isDeviceLocked = false;
-          _daysRemaining = _lockAfterDays;
+          _daysRemaining = lockWindowDays;
         });
       }
       return;
@@ -889,9 +935,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     // Not locked — check timer expiry
     final lastVerified = DateTime.fromMillisecondsSinceEpoch(lastVerifiedMs);
     final daysSince = DateTime.now().difference(lastVerified).inDays;
-    final remaining = _lockAfterDays - daysSince;
+    final remaining = lockWindowDays - daysSince;
 
-    if (daysSince >= _lockAfterDays) {
+    if (daysSince >= lockWindowDays) {
       await _engageDeviceLock();
       if (mounted)
         setState(() {
@@ -902,20 +948,46 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       if (mounted) {
         setState(() {
           _isDeviceLocked = false;
-          _daysRemaining = remaining.clamp(0, _lockAfterDays);
+          _daysRemaining = remaining.clamp(0, lockWindowDays);
         });
       }
     }
   }
 
   Future<void> _engageDeviceLock() async {
-    if (!_isDeviceOwner) return;
+    if (!_isDeviceOwner || _isPaidInFull) return;
     try {
       await _channel.invokeMethod('startDeviceLock');
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_keyDeviceLocked, true);
     } on PlatformException catch (e) {
       debugPrint('Error engaging device lock: $e');
+    }
+  }
+
+  Future<void> _activatePaidInFullMode({bool refreshOwnerState = false}) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('is_paid_in_full', true);
+    await prefs.setBool(_keyDeviceLocked, false);
+    await prefs.remove(_keySimAbsentSince);
+
+    if (mounted) {
+      setState(() {
+        _isPaidInFull = true;
+        _isDeviceLocked = false;
+        _daysRemaining = _lockWindowDays;
+      });
+    }
+
+    try {
+      await _channel.invokeMethod('setPaidInFull', {'paid': true});
+      debugPrint('Paid in full mode applied: restrictions removed');
+    } on PlatformException catch (e) {
+      debugPrint('Error applying paid in full mode: $e');
+    }
+
+    if (refreshOwnerState) {
+      await _checkDeviceOwner();
     }
   }
 
@@ -936,7 +1008,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       if (mounted) {
         setState(() {
           _isDeviceLocked = false;
-          _daysRemaining = _lockAfterDays;
+          _daysRemaining = _lockWindowDays;
         });
       }
     } on PlatformException catch (e) {
@@ -966,6 +1038,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   Future<void> _handleRealtimeCommand(DeviceRealtimeCommand command) async {
     switch (command.command) {
       case 'LOCK':
+        if (_isPaidInFull) {
+          debugPrint('Ignoring realtime LOCK: device is paid in full.');
+          break;
+        }
         if (!_isDeviceLocked) {
           await lockDeviceLocally();
           unawaited(_ensureConnectivityForLockedMode());
@@ -1146,6 +1222,14 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           });
         }
 
+        final serverPaidInFull =
+            response['is_paid_in_full'] == true ||
+            response['paid_in_full'] == true ||
+            (response['payment_status']?.toString().toLowerCase() == 'paid');
+        if (serverPaidInFull && !_isPaidInFull) {
+          await _activatePaidInFullMode(refreshOwnerState: true);
+        }
+
         final rawAction = response['action'] as String? ?? 'none';
         final action = rawAction.toLowerCase();
 
@@ -1161,34 +1245,51 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             break;
           case 'extend':
           case 'extend_days':
-            final days = response['days'] as int? ?? _lockAfterDays;
+            final days =
+                _parseServerDays(response['days']) ??
+                _parseServerDays(response['days_remaining']) ??
+                _lockAfterDays;
             final prefs = await SharedPreferences.getInstance();
+            await prefs.setInt(_keyLockWindowDays, days);
             await prefs.setInt(
               _keyLastVerified,
-              DateTime.now()
-                  .subtract(Duration(days: _lockAfterDays - days))
-                  .millisecondsSinceEpoch,
+              DateTime.now().millisecondsSinceEpoch,
             );
-            if (mounted) setState(() => _daysRemaining = days);
+            if (mounted) {
+              setState(() {
+                _lockWindowDays = days;
+                _daysRemaining = days;
+              });
+            }
             debugPrint('Device extended by server: $days days');
             break;
           case 'paid_in_full':
           case 'mark_paid_in_full':
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setBool('is_paid_in_full', true);
-            if (mounted) setState(() => _isPaidInFull = true);
-            await _disengageDeviceLock();
-            try {
-              await _channel.invokeMethod('clearDeviceOwner');
-              debugPrint(
-                'Device marked as paid in full - restrictions removed',
-              );
-            } on PlatformException catch (e) {
-              debugPrint('Error clearing device owner: $e');
-            }
+          case 'paid_full':
+          case 'paid':
+            await _activatePaidInFullMode(refreshOwnerState: true);
             break;
           case 'none':
-            debugPrint('No action required from server');
+            final serverDays =
+                _parseServerDays(response['days']) ??
+                _parseServerDays(response['days_remaining']);
+            if (serverDays != null) {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setInt(_keyLockWindowDays, serverDays);
+              await prefs.setInt(
+                _keyLastVerified,
+                DateTime.now().millisecondsSinceEpoch,
+              );
+              if (mounted) {
+                setState(() {
+                  _lockWindowDays = serverDays;
+                  _daysRemaining = serverDays;
+                });
+              }
+              debugPrint('Server days synced: $serverDays days');
+            } else {
+              debugPrint('No action required from server');
+            }
             break;
           default:
             debugPrint('Unknown server action: $action');
@@ -1230,12 +1331,14 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     await _serverCheckIn();
   }
 
-  // DEV: simulate 30-day expiry for testing
+  // DEV: simulate expiry for the currently configured lock window.
   Future<void> _devSimulateExpiry() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(
       _keyLastVerified,
-      DateTime.now().subtract(const Duration(days: 31)).millisecondsSinceEpoch,
+      DateTime.now()
+          .subtract(Duration(days: _lockWindowDays + 1))
+          .millisecondsSinceEpoch,
     );
     await _checkTimerAndLock();
   }
@@ -1263,6 +1366,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           : NormalModeScreen(
               isDeviceOwner: _isDeviceOwner,
               daysRemaining: _daysRemaining,
+              lockWindowDays: _lockWindowDays,
               onSimulateExpiry: _devSimulateExpiry,
               isServerConnected: _isServerConnected,
               serverStatusMessage: _serverStatusMessage,
@@ -1369,7 +1473,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: LinearProgressIndicator(
-              value: (_daysRemaining / _lockAfterDays).clamp(0.0, 1.0),
+              value: (_daysRemaining / _lockWindowDays).clamp(0.0, 1.0),
               minHeight: 8,
               backgroundColor: FonexColors.cardBorder,
               valueColor: AlwaysStoppedAnimation<Color>(urgentColor),
@@ -1546,6 +1650,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 class NormalModeScreen extends StatefulWidget {
   final bool isDeviceOwner;
   final int daysRemaining;
+  final int lockWindowDays;
   final VoidCallback onSimulateExpiry;
   final bool isServerConnected;
   final String serverStatusMessage;
@@ -1557,6 +1662,7 @@ class NormalModeScreen extends StatefulWidget {
     super.key,
     required this.isDeviceOwner,
     required this.daysRemaining,
+    required this.lockWindowDays,
     required this.onSimulateExpiry,
     required this.isServerConnected,
     required this.serverStatusMessage,
@@ -1760,7 +1866,10 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: LinearProgressIndicator(
-              value: (widget.daysRemaining / _lockAfterDays).clamp(0.0, 1.0),
+              value: (widget.daysRemaining / widget.lockWindowDays).clamp(
+                0.0,
+                1.0,
+              ),
               minHeight: 8,
               backgroundColor: FonexColors.cardBorder,
               valueColor: AlwaysStoppedAnimation<Color>(urgentColor),
@@ -1917,6 +2026,7 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                               MaterialPageRoute(
                                 builder: (_) => PaymentScheduleScreen(
                                   daysRemaining: widget.daysRemaining,
+                                  lockWindowDays: widget.lockWindowDays,
                                 ),
                               ),
                             ),
@@ -4248,8 +4358,13 @@ class AboutScreen extends StatelessWidget {
 // =============================================================================
 class PaymentScheduleScreen extends StatelessWidget {
   final int daysRemaining;
+  final int lockWindowDays;
 
-  const PaymentScheduleScreen({super.key, required this.daysRemaining});
+  const PaymentScheduleScreen({
+    super.key,
+    required this.daysRemaining,
+    required this.lockWindowDays,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -4331,7 +4446,7 @@ class PaymentScheduleScreen extends StatelessWidget {
                     const Divider(color: FonexColors.cardBorder),
                     _buildInfoRow('Contact', _supportPhone1),
                     const Divider(color: FonexColors.cardBorder),
-                    _buildInfoRow('Payment Period', '${_lockAfterDays} days'),
+                    _buildInfoRow('Payment Period', '$lockWindowDays days'),
                     const Divider(color: FonexColors.cardBorder),
                     _buildInfoRow(
                       'Status',

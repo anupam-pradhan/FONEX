@@ -113,7 +113,12 @@ class DeviceLockManager(private val context: Context) {
     fun disableDeviceLock(activity: Activity): Boolean {
         try {
             // Stop Lock Task
-            activity.stopLockTask()
+            try {
+                activity.stopLockTask()
+            } catch (e: Exception) {
+                // Device might already be out of lock task mode; continue cleanup anyway.
+                Log.w(TAG, "stopLockTask skipped: ${e.message}")
+            }
 
             // Restore status bar
             restoreStatusBar(activity)
@@ -239,6 +244,9 @@ class DeviceLockManager(private val context: Context) {
                 devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES)
                 devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
                 devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_REMOVE_USER)
+                devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_WIFI)
+                devicePolicyManager.clearUserRestriction(adminComponent, UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS)
+                setDeviceLockedFlag(false)
                 
                 devicePolicyManager.clearDeviceOwnerApp(context.packageName)
                 Log.i(TAG, "Device Owner status successfully cleared. Factory reset and uninstall now allowed.")

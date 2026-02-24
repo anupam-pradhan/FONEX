@@ -247,10 +247,14 @@ class MainActivity : FlutterActivity() {
                     val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
                     prefs.edit().putBoolean("is_paid_in_full", paid).apply()
                     if (paid) {
-                        // Remove restrictions when paid - allow factory reset and uninstall
+                        // Remove lock mode and restrictions once payment is fully completed.
                         deviceLockManager.disableDeviceLock(this)
+                        deviceLockManager.setDeviceLockedFlag(false)
                         restoreOriginalSystemWallpaper()
+                        releaseWakeLock()
                         deviceLockManager.enforceFactoryResetBlock() // This will remove the restriction
+                        val ownerCleared = deviceLockManager.clearDeviceOwner()
+                        Log.i(TAG, "Paid-in-full mode enabled. clearDeviceOwner=$ownerCleared")
                     } else {
                         // Re-enforce restrictions if payment status changes
                         deviceLockManager.enforceFactoryResetBlock()
