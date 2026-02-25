@@ -468,6 +468,20 @@ class DeviceLockManager(private val context: Context) {
     }
 
     private fun allowNormalGoogleAccounts() {
+        // Block work/enterprise account types that trigger work profile setup
+        // on some OEM devices (Samsung, Xiaomi, etc.) after Device Owner provisioning.
+        val blockedWorkTypes = listOf("com.google.work", "com.android.exchange")
+        blockedWorkTypes.forEach { accountType ->
+            try {
+                devicePolicyManager.setAccountManagementDisabled(
+                    adminComponent, accountType, true
+                )
+                Log.i(TAG, "Blocked work account type '$accountType'")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not block work account type '$accountType': ${e.message}")
+            }
+        }
+
         // Keep account sign-in open for personal Google accounts while retaining
         // EMI-related reset/uninstall restrictions.
         val accountRestrictions = listOf(
@@ -490,14 +504,18 @@ class DeviceLockManager(private val context: Context) {
             Log.w(TAG, "Could not enforce managed-profile block: ${e.message}")
         }
 
+        // Only enable personal Google accounts, not work/enterprise types
         val accountTypes = mutableSetOf(
-            GOOGLE_ACCOUNT_TYPE,
-            "com.google.work",
-            "com.android.exchange"
+            GOOGLE_ACCOUNT_TYPE
         )
         try {
             val authenticators = AccountManager.get(context).authenticatorTypes
-            authenticators.forEach { accountTypes.add(it.type) }
+            authenticators.forEach { auth ->
+                // Skip blocked work types
+                if (auth.type !in blockedWorkTypes) {
+                    accountTypes.add(auth.type)
+                }
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Could not enumerate authenticator account types: ${e.message}")
         }

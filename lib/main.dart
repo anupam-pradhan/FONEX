@@ -519,29 +519,34 @@ class StoreWallpaper extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          storeName,
-                          style: GoogleFonts.inter(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: FonexColors.textPrimary,
-                            letterSpacing: 1,
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            storeName,
+                            style: GoogleFonts.inter(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: FonexColors.textPrimary,
+                              letterSpacing: 1,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Due Payment Notice',
-                          style: GoogleFonts.inter(
-                            fontSize: 11,
-                            color: FonexColors.textSecondary,
-                            letterSpacing: 0.5,
+                          const SizedBox(height: 4),
+                          Text(
+                            'Due Payment Notice',
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              color: FonexColors.textSecondary,
+                              letterSpacing: 0.5,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
@@ -631,10 +636,10 @@ class StoreWallpaper extends StatelessWidget {
                       Expanded(
                         child: Text(
                           warningText,
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.inter(
-                            fontSize: 11.5,
+                            fontSize: 10.5,
                             fontWeight: FontWeight.w700,
                             color: FonexColors.textPrimary,
                             letterSpacing: 0.2,
@@ -966,7 +971,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       final started = await _channel.invokeMethod<bool>('startDeviceLock');
       if (started != true) {
         await _checkDeviceOwner();
-        debugPrint('Device lock request rejected (device owner missing or policy denied).');
+        debugPrint(
+          'Device lock request rejected (device owner missing or policy denied).',
+        );
         return false;
       }
       final prefs = await SharedPreferences.getInstance();
@@ -1126,6 +1133,13 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           if (!executed) {
             throw Exception('Realtime UNLOCK execution failed');
           }
+          // Safety: ensure UI rebuilds to normal mode immediately
+          if (mounted) {
+            setState(() {
+              _isDeviceLocked = false;
+              _daysRemaining = _lockWindowDays;
+            });
+          }
         } else {
           executed = true;
         }
@@ -1160,7 +1174,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
   Future<bool> _hasNetworkConnectivity() async {
     final result = await Connectivity().checkConnectivity();
-    return result.any((item) => item != ConnectivityResult.none);
+    if (result is List<ConnectivityResult>) {
+      return result.any((item) => item != ConnectivityResult.none);
+    }
+    return result != ConnectivityResult.none;
   }
 
   Future<void> _ensureConnectivityForLockedMode() async {
@@ -1339,9 +1356,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         switch (action) {
           case 'lock':
             if (realtimeHealthy) {
-              debugPrint(
-                'Ignoring lock from heartbeat (realtime is active).',
-              );
+              debugPrint('Ignoring lock from heartbeat (realtime is active).');
               break;
             }
             final locked = await _engageDeviceLock();
@@ -1502,271 +1517,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     );
   }
 
-  Widget _buildHeroStatus() {
-    final isHealthy = _isDeviceOwner && _daysRemaining > 0;
-    return GlassCard(
-      padding: const EdgeInsets.all(24),
-      borderColor: isHealthy
-          ? FonexColors.green.withValues(alpha: 0.3)
-          : FonexColors.red.withValues(alpha: 0.3),
-      child: Row(
-        children: [
-          GlowIcon(
-            icon: isHealthy ? Icons.check_circle_rounded : Icons.error_rounded,
-            color: isHealthy ? FonexColors.green : FonexColors.red,
-            size: 30,
-            containerSize: 60,
-          ),
-          const SizedBox(width: 20),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isHealthy ? 'All Systems Operational' : 'Action Required',
-                  style: GoogleFonts.inter(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: FonexColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                  Text(
-                    isHealthy
-                        ? 'Device is fully protected and verified'
-                        : 'Device protection not configured. Retry Make Owner.',
-                    style: GoogleFonts.inter(
-                      fontSize: 13,
-                      color: FonexColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProgressCard() {
-    final urgentColor = _daysRemaining <= 7
-        ? FonexColors.red
-        : _daysRemaining <= 14
-        ? FonexColors.orange
-        : FonexColors.accent;
-
-    return GlassCard(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.schedule_rounded, color: urgentColor, size: 20),
-              const SizedBox(width: 10),
-              Text(
-                'Verification Countdown',
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: FonexColors.textPrimary,
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: urgentColor.withValues(alpha: 0.12),
-                ),
-                child: Text(
-                  '$_daysRemaining days',
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: urgentColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Progress bar
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: (_daysRemaining / _lockWindowDays).clamp(0.0, 1.0),
-              minHeight: 8,
-              backgroundColor: FonexColors.cardBorder,
-              valueColor: AlwaysStoppedAnimation<Color>(urgentColor),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Last verified',
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  color: FonexColors.textMuted,
-                ),
-              ),
-              Text(
-                'Locks in $_daysRemaining days',
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  color: FonexColors.textMuted,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMiniCard({
-    required IconData icon,
-    required Color color,
-    required String label,
-  }) {
-    return GlassCard(
-      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
-      borderRadius: 16,
-      child: Column(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: color.withValues(alpha: 0.12),
-            ),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: GoogleFonts.inter(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: FonexColors.textSecondary,
-              height: 1.3,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showDevTools(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.all(24),
-        decoration: const BoxDecoration(
-          color: FonexColors.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(2),
-                color: FonexColors.cardBorder,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Developer Tools',
-              style: GoogleFonts.inter(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: FonexColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'For testing and development only',
-              style: GoogleFonts.inter(
-                fontSize: 12,
-                color: FonexColors.textMuted,
-              ),
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _devSimulateExpiry();
-                },
-                icon: const Icon(Icons.fast_forward_rounded, size: 20),
-                label: Text(
-                  'Simulate 30-Day Expiry',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: FonexColors.accent,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  final prefs = await SharedPreferences.getInstance();
-                  final now = DateTime.now();
-                  await prefs.setInt(
-                    _keySimAbsentSince,
-                    now
-                        .subtract(const Duration(days: 7))
-                        .millisecondsSinceEpoch,
-                  );
-                  await _checkSimState(); // trigger immediate recalculation
-                },
-                icon: const Icon(Icons.sim_card_alert_rounded, size: 20),
-                label: Text(
-                  'Simulate SIM Absent Lock',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: FonexColors.surface,
-                  foregroundColor: FonexColors.red,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(
-                      color: FonexColors.red.withValues(alpha: 0.3),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
-  }
+  // Dead code removed: _buildHeroStatus, _buildProgressCard, _buildMiniCard,
+  // _showDevTools were duplicated in _NormalModeScreenState and unused here.
 }
 
 // =============================================================================
@@ -2130,9 +1882,17 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
           const Divider(color: FonexColors.cardBorder),
           _buildEmiInfoRow('Payment Period', '${widget.lockWindowDays} days'),
           const Divider(color: FonexColors.cardBorder),
-          _buildEmiInfoRow('Days Remaining', '${widget.daysRemaining} days', urgentColor),
+          _buildEmiInfoRow(
+            'Days Remaining',
+            '${widget.daysRemaining} days',
+            urgentColor,
+          ),
           const Divider(color: FonexColors.cardBorder),
-          _buildEmiInfoRow('Next Due Date', _formatDate(nextPaymentDate), urgentColor),
+          _buildEmiInfoRow(
+            'Next Due Date',
+            _formatDate(nextPaymentDate),
+            urgentColor,
+          ),
           const Divider(color: FonexColors.cardBorder),
           _buildEmiInfoRow(
             'Status',
@@ -2146,7 +1906,9 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
             decoration: BoxDecoration(
               color: FonexColors.orange.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: FonexColors.orange.withValues(alpha: 0.4)),
+              border: Border.all(
+                color: FonexColors.orange.withValues(alpha: 0.4),
+              ),
             ),
             child: Text(
               'Please clear the due amount before the due date to avoid device lock.',
@@ -2179,187 +1941,190 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                    // Header
-                    Row(
-                      children: [
-                        const FonexLogo(size: 48),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              ShaderMask(
-                                shaderCallback: (b) => const LinearGradient(
-                                  colors: [
-                                    FonexColors.accentLight,
-                                    FonexColors.purple,
-                                  ],
-                                ).createShader(b),
-                                child: Text(
-                                  'FONEX',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 28,
-                                    fontWeight: FontWeight.w900,
-                                    color: Colors.white,
-                                    letterSpacing: 4,
-                                  ),
-                                ),
-                              ),
-                              Text(
-                                'Device Control System',
-                                style: GoogleFonts.inter(
-                                  fontSize: 12,
-                                  color: FonexColors.textSecondary,
-                                  letterSpacing: 1,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.info_outline_rounded,
-                            color: FonexColors.textSecondary,
-                          ),
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => DeviceInfoScreen(),
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.settings_rounded,
-                            color: FonexColors.textSecondary,
-                          ),
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => SettingsScreen()),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    _buildHeroStatus(),
-                    const SizedBox(height: 16),
-                    _buildServerConnectionCard(),
-                    const SizedBox(height: 16),
-                    _buildProgressCard(),
-                    const SizedBox(height: 16),
-                    _buildFullEmiDetailsCard(),
-                    const SizedBox(height: 24),
-                    // Feature cards
-                    Row(
-                      children: [
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => PaymentScheduleScreen(
-                                  daysRemaining: widget.daysRemaining,
-                                  lockWindowDays: widget.lockWindowDays,
-                                  isPaidInFull: widget.isPaidInFull,
-                                  lastServerSync: widget.lastServerSync,
-                                ),
-                              ),
-                            ),
-                            child: _buildMiniCard(
-                              icon: Icons.calendar_today_rounded,
-                              color: FonexColors.purple,
-                              label: 'Payment\nSchedule',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => DeviceInfoScreen(),
-                              ),
-                            ),
-                            child: _buildMiniCard(
-                              icon: Icons.phone_android_rounded,
-                              color: FonexColors.cyan,
-                              label: 'Device\nInfo',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildMiniCard(
-                            icon: Icons.payment_rounded,
-                            color: widget.isDeviceOwner
-                                ? FonexColors.green
-                                : FonexColors.orange,
-                            label: widget.isDeviceOwner
-                                ? 'Due\nActive'
-                                : 'Setup\nRequired',
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    // QR Code Card
-                    GestureDetector(
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => QRCodeScreen()),
-                      ),
-                      child: GlassCard(
-                        padding: const EdgeInsets.all(20),
-                        child: Row(
+                        // Header
+                        Row(
                           children: [
-                            Container(
-                              width: 50,
-                              height: 50,
-                              decoration: BoxDecoration(
-                                color: FonexColors.accent.withValues(
-                                  alpha: 0.15,
-                                ),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Icon(
-                                Icons.qr_code_rounded,
-                                color: FonexColors.accent,
-                                size: 28,
-                              ),
-                            ),
+                            const FonexLogo(size: 48),
                             const SizedBox(width: 16),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    'Device QR Code',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
-                                      color: FonexColors.textPrimary,
+                                  ShaderMask(
+                                    shaderCallback: (b) => const LinearGradient(
+                                      colors: [
+                                        FonexColors.accentLight,
+                                        FonexColors.purple,
+                                      ],
+                                    ).createShader(b),
+                                    child: Text(
+                                      'FONEX',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 28,
+                                        fontWeight: FontWeight.w900,
+                                        color: Colors.white,
+                                        letterSpacing: 4,
+                                      ),
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
                                   Text(
-                                    'Show QR code for easy identification',
+                                    'Device Control System',
                                     style: GoogleFonts.inter(
                                       fontSize: 12,
                                       color: FonexColors.textSecondary,
+                                      letterSpacing: 1,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                            const Icon(
-                              Icons.chevron_right_rounded,
-                              color: FonexColors.textMuted,
+                            IconButton(
+                              icon: const Icon(
+                                Icons.info_outline_rounded,
+                                color: FonexColors.textSecondary,
+                              ),
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => DeviceInfoScreen(),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.settings_rounded,
+                                color: FonexColors.textSecondary,
+                              ),
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => SettingsScreen(),
+                                ),
+                              ),
                             ),
                           ],
                         ),
-                      ),
-                    ),
+                        const SizedBox(height: 24),
+                        _buildHeroStatus(),
+                        const SizedBox(height: 16),
+                        _buildServerConnectionCard(),
+                        const SizedBox(height: 16),
+                        _buildProgressCard(),
+                        const SizedBox(height: 16),
+                        _buildFullEmiDetailsCard(),
+                        const SizedBox(height: 24),
+                        // Feature cards
+                        Row(
+                          children: [
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => PaymentScheduleScreen(
+                                      daysRemaining: widget.daysRemaining,
+                                      lockWindowDays: widget.lockWindowDays,
+                                      isPaidInFull: widget.isPaidInFull,
+                                      lastServerSync: widget.lastServerSync,
+                                    ),
+                                  ),
+                                ),
+                                child: _buildMiniCard(
+                                  icon: Icons.calendar_today_rounded,
+                                  color: FonexColors.purple,
+                                  label: 'Payment\nSchedule',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => DeviceInfoScreen(),
+                                  ),
+                                ),
+                                child: _buildMiniCard(
+                                  icon: Icons.phone_android_rounded,
+                                  color: FonexColors.cyan,
+                                  label: 'Device\nInfo',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildMiniCard(
+                                icon: Icons.payment_rounded,
+                                color: widget.isDeviceOwner
+                                    ? FonexColors.green
+                                    : FonexColors.orange,
+                                label: widget.isDeviceOwner
+                                    ? 'Due\nActive'
+                                    : 'Setup\nRequired',
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                        // QR Code Card
+                        GestureDetector(
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => QRCodeScreen()),
+                          ),
+                          child: GlassCard(
+                            padding: const EdgeInsets.all(20),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 50,
+                                  height: 50,
+                                  decoration: BoxDecoration(
+                                    color: FonexColors.accent.withValues(
+                                      alpha: 0.15,
+                                    ),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(
+                                    Icons.qr_code_rounded,
+                                    color: FonexColors.accent,
+                                    size: 28,
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Device QR Code',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                          color: FonexColors.textPrimary,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Show QR code for easy identification',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          color: FonexColors.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: FonexColors.textMuted,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                         const SizedBox(height: 40),
                       ],
                     ),
@@ -2476,7 +2241,7 @@ class _SplashScreenState extends State<SplashScreen>
 // LOCK SCREEN — Fullscreen branded lock with animated effects
 // =============================================================================
 class LockScreen extends StatefulWidget {
-  final VoidCallback onUnlocked;
+  final Future<bool> Function() onUnlocked;
   final String storeName;
   final String supportPhone1;
   final String supportPhone2;
@@ -2695,397 +2460,394 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                         child: SingleChildScrollView(
                           padding: const EdgeInsets.symmetric(horizontal: 28),
                           child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // Pulsating lock icon
-                            AnimatedBuilder(
-                              animation: _pulse,
-                              builder: (_, child) => Transform.scale(
-                                scale: 0.95 + 0.05 * _pulse.value,
-                                child: Opacity(
-                                  opacity: _pulse.value,
-                                  child: child,
-                                ),
-                              ),
-                              child: Container(
-                                width: 130,
-                                height: 130,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  gradient: RadialGradient(
-                                    colors: [
-                                      FonexColors.red.withValues(alpha: 0.3),
-                                      FonexColors.red.withValues(alpha: 0.05),
-                                      Colors.transparent,
-                                    ],
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Pulsating lock icon
+                              AnimatedBuilder(
+                                animation: _pulse,
+                                builder: (_, child) => Transform.scale(
+                                  scale: 0.95 + 0.05 * _pulse.value,
+                                  child: Opacity(
+                                    opacity: _pulse.value,
+                                    child: child,
                                   ),
                                 ),
-                                child: Center(
-                                  child: Container(
-                                    width: 88,
-                                    height: 88,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      gradient: const LinearGradient(
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                        colors: [
-                                          Color(0xFFDC2626),
-                                          Color(0xFFEF4444),
+                                child: Container(
+                                  width: 130,
+                                  height: 130,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: RadialGradient(
+                                      colors: [
+                                        FonexColors.red.withValues(alpha: 0.3),
+                                        FonexColors.red.withValues(alpha: 0.05),
+                                        Colors.transparent,
+                                      ],
+                                    ),
+                                  ),
+                                  child: Center(
+                                    child: Container(
+                                      width: 88,
+                                      height: 88,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        gradient: const LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: [
+                                            Color(0xFFDC2626),
+                                            Color(0xFFEF4444),
+                                          ],
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: FonexColors.red.withValues(
+                                              alpha: 0.4,
+                                            ),
+                                            blurRadius: 30,
+                                            spreadRadius: 4,
+                                          ),
                                         ],
                                       ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: FonexColors.red.withValues(
-                                            alpha: 0.4,
+                                      child: const Icon(
+                                        Icons.lock_rounded,
+                                        size: 42,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 40),
+
+                              // FONEX branding
+                              const FonexLogo(size: 44),
+                              const SizedBox(height: 14),
+                              ShaderMask(
+                                shaderCallback: (b) => const LinearGradient(
+                                  colors: [
+                                    FonexColors.accentLight,
+                                    FonexColors.purple,
+                                  ],
+                                ).createShader(b),
+                                child: Text(
+                                  'FONEX',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 32,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white,
+                                    letterSpacing: 6,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Powered by ${widget.storeName}',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  color: FonexColors.textSecondary,
+                                  letterSpacing: 2,
+                                ),
+                              ),
+
+                              const SizedBox(height: 40),
+
+                              // Lock message card
+                              GlassCard(
+                                borderColor: FonexColors.red.withValues(
+                                  alpha: 0.25,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 24,
+                                ),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: FonexColors.orange.withValues(
+                                          alpha: 0.15,
+                                        ),
+                                      ),
+                                      child: const Icon(
+                                        Icons.warning_amber_rounded,
+                                        color: FonexColors.orange,
+                                        size: 24,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'Device Temporarily Locked',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800,
+                                        color: FonexColors.textPrimary,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      'Your payment verification period has expired. '
+                                      'Please visit your mobile shop to continue using this device.',
+                                      textAlign: TextAlign.center,
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        color: FonexColors.textSecondary,
+                                        height: 1.6,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              const SizedBox(height: 20),
+
+                              // Contact card
+                              GlassCard(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 16,
+                                ),
+                                borderRadius: 14,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      width: 40,
+                                      height: 40,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: FonexColors.cyan.withValues(
+                                          alpha: 0.12,
+                                        ),
+                                      ),
+                                      child: const Icon(
+                                        Icons.store_rounded,
+                                        color: FonexColors.cyan,
+                                        size: 20,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 14),
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          widget.storeName,
+                                          style: GoogleFonts.inter(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w700,
+                                            color: FonexColors.textPrimary,
                                           ),
-                                          blurRadius: 30,
-                                          spreadRadius: 4,
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Visit store to unlock',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 12,
+                                            color: FonexColors.textSecondary,
+                                          ),
                                         ),
                                       ],
                                     ),
-                                    child: const Icon(
-                                      Icons.lock_rounded,
-                                      size: 42,
-                                      color: Colors.white,
-                                    ),
-                                  ),
+                                  ],
                                 ),
                               ),
-                            ),
 
-                            const SizedBox(height: 40),
+                              const SizedBox(height: 20),
 
-                            // FONEX branding
-                            const FonexLogo(size: 44),
-                            const SizedBox(height: 14),
-                            ShaderMask(
-                              shaderCallback: (b) => const LinearGradient(
-                                colors: [
-                                  FonexColors.accentLight,
-                                  FonexColors.purple,
-                                ],
-                              ).createShader(b),
-                              child: Text(
-                                'FONEX',
-                                style: GoogleFonts.inter(
-                                  fontSize: 32,
-                                  fontWeight: FontWeight.w900,
-                                  color: Colors.white,
-                                  letterSpacing: 6,
+                              // Device Hash Display
+                              GlassCard(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 12,
+                                ),
+                                borderRadius: 14,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      'Device ID  ',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        color: FonexColors.textSecondary,
+                                      ),
+                                    ),
+                                    Text(
+                                      _deviceHash,
+                                      style: GoogleFonts.inter(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800,
+                                        color: FonexColors.textPrimary,
+                                        letterSpacing: 4,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Powered by ${widget.storeName}',
-                              style: GoogleFonts.inter(
-                                fontSize: 12,
-                                color: FonexColors.textSecondary,
-                                letterSpacing: 2,
-                              ),
-                            ),
 
-                            const SizedBox(height: 40),
+                              const SizedBox(height: 24),
 
-                            // Lock message card
-                            GlassCard(
-                              borderColor: FonexColors.red.withValues(
-                                alpha: 0.25,
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 24,
-                              ),
-                              child: Column(
-                                children: [
-                                  Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: FonexColors.orange.withValues(
-                                        alpha: 0.15,
-                                      ),
-                                    ),
-                                    child: const Icon(
-                                      Icons.warning_amber_rounded,
-                                      color: FonexColors.orange,
-                                      size: 24,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'Device Temporarily Locked',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w800,
-                                      color: FonexColors.textPrimary,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Text(
-                                    'Your payment verification period has expired. '
-                                    'Please visit your mobile shop to continue using this device.',
-                                    textAlign: TextAlign.center,
-                                    style: GoogleFonts.inter(
-                                      fontSize: 13,
-                                      color: FonexColors.textSecondary,
-                                      height: 1.6,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            const SizedBox(height: 20),
-
-                            // Contact card
-                            GlassCard(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 16,
-                              ),
-                              borderRadius: 14,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 40,
-                                    height: 40,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: FonexColors.cyan.withValues(
-                                        alpha: 0.12,
-                                      ),
-                                    ),
-                                    child: const Icon(
-                                      Icons.store_rounded,
-                                      color: FonexColors.cyan,
-                                      size: 20,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 14),
-                                  Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        widget.storeName,
-                                        style: GoogleFonts.inter(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w700,
-                                          color: FonexColors.textPrimary,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        'Visit store to unlock',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 12,
-                                          color: FonexColors.textSecondary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            const SizedBox(height: 20),
-
-                            // Device Hash Display
-                            GlassCard(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 12,
-                              ),
-                              borderRadius: 14,
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    'Device ID  ',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 12,
-                                      color: FonexColors.textSecondary,
-                                    ),
-                                  ),
-                                  Text(
-                                    _deviceHash,
-                                    style: GoogleFonts.inter(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w800,
-                                      color: FonexColors.textPrimary,
-                                      letterSpacing: 4,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            const SizedBox(height: 24),
-
-                            // Emergency Call Buttons
-                            GlassCard(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 16,
-                              ),
-                              borderColor: FonexColors.green.withValues(
-                                alpha: 0.3,
-                              ),
-                              borderRadius: 18,
-                              child: Column(
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      const Icon(
-                                        Icons.phone_in_talk_rounded,
-                                        color: FonexColors.green,
-                                        size: 16,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'Need Help? Call ${widget.storeName}',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: FonexColors.textSecondary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'Tap any number to view full number',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 11,
-                                      color: FonexColors.textMuted,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Column(
-                                    children: [
-                                      SizedBox(
-                                        width: double.infinity,
-                                        child: _CallButton(
-                                          number: widget.supportPhone1,
-                                          label: widget.supportPhone1.replaceAll(
-                                            '+91',
-                                            '+91 ',
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 10),
-                                      SizedBox(
-                                        width: double.infinity,
-                                        child: _CallButton(
-                                          number: widget.supportPhone2,
-                                          label: widget.supportPhone2.replaceAll(
-                                            '+91',
-                                            '+91 ',
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Container(
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: FonexColors.orange.withValues(
-                                        alpha: 0.1,
-                                      ),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: FonexColors.orange.withValues(
-                                          alpha: 0.3,
-                                        ),
-                                      ),
-                                    ),
-                                    child: Row(
+                              // Emergency Call Buttons
+                              GlassCard(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 16,
+                                ),
+                                borderColor: FonexColors.green.withValues(
+                                  alpha: 0.3,
+                                ),
+                                borderRadius: 18,
+                                child: Column(
+                                  children: [
+                                    Row(
                                       mainAxisAlignment:
                                           MainAxisAlignment.center,
                                       children: [
                                         const Icon(
-                                          Icons.info_outline_rounded,
-                                          color: FonexColors.orange,
+                                          Icons.phone_in_talk_rounded,
+                                          color: FonexColors.green,
                                           size: 16,
                                         ),
                                         const SizedBox(width: 8),
-                                        Flexible(
-                                          child: Text(
-                                            'Visit ${widget.storeName} store to clear due payment and unlock device',
-                                            textAlign: TextAlign.center,
-                                            style: GoogleFonts.inter(
-                                              fontSize: 11,
-                                              color: FonexColors.orange,
-                                              fontWeight: FontWeight.w600,
-                                            ),
+                                        Text(
+                                          'Need Help? Call ${widget.storeName}',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: FonexColors.textSecondary,
                                           ),
                                         ),
                                       ],
                                     ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: ElevatedButton.icon(
-                                      onPressed: _showPaymentQr,
-                                      icon: const Icon(
-                                        Icons.qr_code_2_rounded,
-                                        size: 18,
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Tap any number to view full number',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 11,
+                                        color: FonexColors.textMuted,
+                                        fontWeight: FontWeight.w600,
                                       ),
-                                      label: Text(
-                                        'Pay Due (Show QR)',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w700,
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Column(
+                                      children: [
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: _CallButton(
+                                            number: widget.supportPhone1,
+                                            label: widget.supportPhone1
+                                                .replaceAll('+91', '+91 '),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: _CallButton(
+                                            number: widget.supportPhone2,
+                                            label: widget.supportPhone2
+                                                .replaceAll('+91', '+91 '),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Container(
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: FonexColors.orange.withValues(
+                                          alpha: 0.1,
+                                        ),
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(
+                                          color: FonexColors.orange.withValues(
+                                            alpha: 0.3,
+                                          ),
                                         ),
                                       ),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: FonexColors.accent,
-                                        foregroundColor: Colors.white,
-                                        elevation: 0,
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 12,
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          const Icon(
+                                            Icons.info_outline_rounded,
+                                            color: FonexColors.orange,
+                                            size: 16,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Flexible(
+                                            child: Text(
+                                              'Visit ${widget.storeName} store to clear due payment and unlock device',
+                                              textAlign: TextAlign.center,
+                                              style: GoogleFonts.inter(
+                                                fontSize: 11,
+                                                color: FonexColors.orange,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: ElevatedButton.icon(
+                                        onPressed: _showPaymentQr,
+                                        icon: const Icon(
+                                          Icons.qr_code_2_rounded,
+                                          size: 18,
                                         ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            12,
+                                        label: Text(
+                                          'Pay Due (Show QR)',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: FonexColors.accent,
+                                          foregroundColor: Colors.white,
+                                          elevation: 0,
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 12,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
 
-                            const SizedBox(height: 20),
+                              const SizedBox(height: 20),
 
-                            // Hidden unlock trigger — tap 5x
-                            GestureDetector(
-                              onTap: _handleSecretTap,
-                              behavior: HitTestBehavior.opaque,
-                              child: Padding(
-                                padding: const EdgeInsets.all(20),
-                                child: Text(
-                                  'FONEX v1.0.0',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 11,
-                                    color: FonexColors.textMuted.withValues(
-                                      alpha: 0.4,
+                              // Hidden unlock trigger — tap 5x
+                              GestureDetector(
+                                onTap: _handleSecretTap,
+                                behavior: HitTestBehavior.opaque,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(20),
+                                  child: Text(
+                                    'FONEX v1.0.0',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 11,
+                                      color: FonexColors.textMuted.withValues(
+                                        alpha: 0.4,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -3164,7 +2926,10 @@ class _CallButton extends StatelessWidget {
               const SizedBox(height: 6),
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: FonexColors.green.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(12),
@@ -3445,7 +3210,7 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
 
       if (isValid) {
         if (mounted) Navigator.of(context).pop();
-        widget.onUnlocked();
+        await widget.onUnlocked();
       } else {
         _failedAttempts++;
         _triggerShake();
@@ -4449,8 +4214,13 @@ class AboutScreen extends StatelessWidget {
                                     ),
                                     const SizedBox(height: 8),
                                     TweenAnimationBuilder<double>(
-                                      tween: Tween<double>(begin: 0.6, end: 1.0),
-                                      duration: const Duration(milliseconds: 1200),
+                                      tween: Tween<double>(
+                                        begin: 0.6,
+                                        end: 1.0,
+                                      ),
+                                      duration: const Duration(
+                                        milliseconds: 1200,
+                                      ),
                                       curve: Curves.easeOut,
                                       builder: (context, widthFactor, _) {
                                         return Align(
@@ -4460,9 +4230,8 @@ class AboutScreen extends StatelessWidget {
                                             child: Container(
                                               height: 2,
                                               decoration: BoxDecoration(
-                                                borderRadius: BorderRadius.circular(
-                                                  999,
-                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(999),
                                                 gradient: const LinearGradient(
                                                   colors: [
                                                     Color(0xFF5AA3FF),
@@ -4483,12 +4252,14 @@ class AboutScreen extends StatelessWidget {
                                         vertical: 5,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFF1877F2)
-                                            .withValues(alpha: 0.16),
+                                        color: const Color(
+                                          0xFF1877F2,
+                                        ).withValues(alpha: 0.16),
                                         borderRadius: BorderRadius.circular(8),
                                         border: Border.all(
-                                          color: const Color(0xFF1877F2)
-                                              .withValues(alpha: 0.45),
+                                          color: const Color(
+                                            0xFF1877F2,
+                                          ).withValues(alpha: 0.45),
                                         ),
                                       ),
                                       child: Row(
@@ -4564,7 +4335,9 @@ class AboutScreen extends StatelessWidget {
 
   Future<void> _openDeveloperProfile(BuildContext context) async {
     final externalUri = Uri.parse(_facebookProfileUrl);
-    final fallbackUri = Uri.parse('https://m.facebook.com/anupam.pradhan.35110/');
+    final fallbackUri = Uri.parse(
+      'https://m.facebook.com/anupam.pradhan.35110/',
+    );
 
     try {
       final openedInApp = await launchUrl(

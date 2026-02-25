@@ -19,6 +19,7 @@ class SyncService {
 
   Timer? _syncTimer;
   bool _isSyncing = false;
+  bool _isProcessingFromQueue = false;
   final int _maxRetries = 3;
   final int _syncIntervalSeconds = 300; // 5 minutes default
   final int _batchSize = 10; // Process 10 items at a time
@@ -177,8 +178,9 @@ class SyncService {
         };
         if (isLocked != null) payload['is_locked'] = isLocked;
         if (daysRemaining != null) payload['days_remaining'] = daysRemaining;
-        if (metadata != null && metadata.isNotEmpty)
+        if (metadata != null && metadata.isNotEmpty) {
           payload['metadata'] = metadata;
+        }
 
         final response = await http
             .post(
@@ -200,18 +202,20 @@ class SyncService {
           await Future.delayed(Duration(seconds: (attempt + 1) * 2));
           continue;
         } else {
-          // Queue for later retry
-          await DeviceStorageService.addToSyncQueue({
-            'type': 'checkin',
-            'device_hash': deviceHash,
-            if (deviceId != null) 'device_id': deviceId,
-            'imei': imei,
-            'battery': batteryLevel,
-            'last_seen': (lastSeen ?? DateTime.now()).toIso8601String(),
-            if (isLocked != null) 'is_locked': isLocked,
-            if (daysRemaining != null) 'days_remaining': daysRemaining,
-            if (metadata != null) 'metadata': metadata,
-          });
+          // Queue for later retry — but not if we're already processing from queue
+          if (!_isProcessingFromQueue) {
+            await DeviceStorageService.addToSyncQueue({
+              'type': 'checkin',
+              'device_hash': deviceHash,
+              'device_id': ?deviceId,
+              'imei': imei,
+              'battery': batteryLevel,
+              'last_seen': (lastSeen ?? DateTime.now()).toIso8601String(),
+              'is_locked': ?isLocked,
+              'days_remaining': ?daysRemaining,
+              'metadata': ?metadata,
+            });
+          }
           return null;
         }
       } catch (e) {
@@ -220,19 +224,21 @@ class SyncService {
           await Future.delayed(Duration(seconds: (attempt + 1) * 2));
           continue;
         } else {
-          // Queue for later retry
-          await DeviceStorageService.addToSyncQueue({
-            'type': 'checkin',
-            'device_hash': deviceHash,
-            if (deviceId != null) 'device_id': deviceId,
-            'imei': imei,
-            'battery': batteryLevel,
-            'last_seen': (lastSeen ?? DateTime.now()).toIso8601String(),
-            if (isLocked != null) 'is_locked': isLocked,
-            if (daysRemaining != null) 'days_remaining': daysRemaining,
-            if (metadata != null) 'metadata': metadata,
-          });
-          await DeviceStorageService.trackFailedSync('Check-in error: $e');
+          // Queue for later retry — but not if we're already processing from queue
+          if (!_isProcessingFromQueue) {
+            await DeviceStorageService.addToSyncQueue({
+              'type': 'checkin',
+              'device_hash': deviceHash,
+              'device_id': ?deviceId,
+              'imei': imei,
+              'battery': batteryLevel,
+              'last_seen': (lastSeen ?? DateTime.now()).toIso8601String(),
+              'is_locked': ?isLocked,
+              'days_remaining': ?daysRemaining,
+              'metadata': ?metadata,
+            });
+            await DeviceStorageService.trackFailedSync('Check-in error: $e');
+          }
           return null;
         }
       }
@@ -289,55 +295,74 @@ class SyncService {
     List<Map<String, dynamic>> batch,
     int startIndex,
   ) async {
-    for (int i = 0; i < batch.length; i++) {
-      final item = batch[i];
-      final queueIndex = startIndex + i;
-      final retryCount = item['retry_count'] as int? ?? 0;
+    _isProcessingFromQueue = true;
+    final indicesToRemove = <int>[];
+    final indicesToRetry = <int>[];
 
-      // Skip if retried too many times
-      if (retryCount >= _maxRetries) {
-        debugPrint('⚠️ Skipping item after $retryCount retries');
-        await DeviceStorageService.removeFromSyncQueue(queueIndex);
-        continue;
-      }
+    try {
+      for (int i = 0; i < batch.length; i++) {
+        final item = batch[i];
+        final queueIndex = startIndex + i;
+        final retryCount = item['retry_count'] as int? ?? 0;
 
-      try {
-        final type = item['type'] as String? ?? 'checkin';
-        bool success = false;
-
-        if (type == 'registration') {
-          success = await _syncRegistrationToServer(
-            deviceHash: item['device_hash'] as String,
-            imei: item['imei'] as String,
-            metadata: item['metadata'] as Map<String, dynamic>? ?? {},
-          );
-        } else if (type == 'checkin') {
-          final rawLastSeen = item['last_seen'] as String?;
-          final result = await performCheckIn(
-            deviceHash: item['device_hash'] as String,
-            imei: item['imei'] as String,
-            deviceId: item['device_id'] as String?,
-            batteryLevel: item['battery'] as int?,
-            lastSeen: rawLastSeen != null
-                ? DateTime.tryParse(rawLastSeen)
-                : null,
-            isLocked: item['is_locked'] as bool?,
-            daysRemaining: item['days_remaining'] as int?,
-            metadata: item['metadata'] as Map<String, dynamic>? ?? {},
-          );
-          success = result != null;
+        // Skip if retried too many times
+        if (retryCount >= _maxRetries) {
+          debugPrint('⚠️ Skipping item after $retryCount retries');
+          indicesToRemove.add(queueIndex);
+          continue;
         }
 
-        if (success) {
-          await DeviceStorageService.removeFromSyncQueue(queueIndex);
-          debugPrint('✅ Synced item: $type');
-        } else {
-          await DeviceStorageService.incrementRetryCount(queueIndex);
+        try {
+          final type = item['type'] as String? ?? 'checkin';
+          bool success = false;
+
+          if (type == 'registration') {
+            success = await _syncRegistrationToServer(
+              deviceHash: item['device_hash'] as String,
+              imei: item['imei'] as String,
+              metadata: item['metadata'] as Map<String, dynamic>? ?? {},
+            );
+          } else if (type == 'checkin') {
+            final rawLastSeen = item['last_seen'] as String?;
+            final result = await performCheckIn(
+              deviceHash: item['device_hash'] as String,
+              imei: item['imei'] as String,
+              deviceId: item['device_id'] as String?,
+              batteryLevel: item['battery'] as int?,
+              lastSeen: rawLastSeen != null
+                  ? DateTime.tryParse(rawLastSeen)
+                  : null,
+              isLocked: item['is_locked'] as bool?,
+              daysRemaining: item['days_remaining'] as int?,
+              metadata: item['metadata'] as Map<String, dynamic>? ?? {},
+            );
+            success = result != null;
+          }
+
+          if (success) {
+            indicesToRemove.add(queueIndex);
+            debugPrint('✅ Synced item: $type');
+          } else {
+            indicesToRetry.add(queueIndex);
+          }
+        } catch (e) {
+          debugPrint('❌ Error syncing item: $e');
+          indicesToRetry.add(queueIndex);
         }
-      } catch (e) {
-        debugPrint('❌ Error syncing item: $e');
-        await DeviceStorageService.incrementRetryCount(queueIndex);
       }
+
+      // Remove in reverse order to preserve indices
+      indicesToRemove.sort((a, b) => b.compareTo(a));
+      for (final idx in indicesToRemove) {
+        await DeviceStorageService.removeFromSyncQueue(idx);
+      }
+      // Increment retry counts (also in reverse to preserve indices)
+      indicesToRetry.sort((a, b) => b.compareTo(a));
+      for (final idx in indicesToRetry) {
+        await DeviceStorageService.incrementRetryCount(idx);
+      }
+    } finally {
+      _isProcessingFromQueue = false;
     }
   }
 

@@ -287,7 +287,7 @@ class RealtimeCommandService {
 
   Duration _nextReconnectDelay() {
     final attempt = _reconnectAttempt++;
-    final seconds = min(30, 1 << min(attempt, 5));
+    final seconds = min(10, 1 << min(attempt, 3));
     return Duration(seconds: seconds);
   }
 
