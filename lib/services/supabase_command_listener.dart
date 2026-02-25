@@ -62,7 +62,9 @@ class SupabaseCommandListener {
         }
       });
 
-      AppLogger.log('🚀 Supabase command listener started for device: $deviceId');
+      AppLogger.log(
+        '🚀 Supabase command listener started for device: $deviceId',
+      );
     } catch (e) {
       AppLogger.log('Error starting listener: $e');
     }
@@ -138,7 +140,10 @@ class SupabaseCommandListener {
     try {
       await Supabase.instance.client
           .from('device_commands')
-          .update({'processed': true, 'processed_at': DateTime.now().toIso8601String()})
+          .update({
+            'processed': true,
+            'processed_at': DateTime.now().toIso8601String(),
+          })
           .eq('id', commandId);
     } catch (e) {
       AppLogger.log('Error marking command processed: $e');

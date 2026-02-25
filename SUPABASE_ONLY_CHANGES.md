@@ -7,6 +7,7 @@ Your FONEX app has been successfully updated to use **Supabase ONLY** - no Fireb
 ### Files Changed
 
 #### 1. **pubspec.yaml** ✅
+
 - ❌ Removed: `firebase_messaging` (not needed)
 - ❌ Removed: `firebase_database` (not needed)
 - ✅ Kept: `firebase_core` + `firebase_auth` (only for Google Sign-In)
@@ -22,9 +23,11 @@ supabase_flutter: ^2.12.0
 ```
 
 #### 2. **Created: lib/services/supabase_command_listener.dart** ✅
+
 Uses your existing Supabase Realtime connection to listen for lock/unlock commands.
 
 **Key Features:**
+
 - Listens via Supabase PostgreSQL Changes
 - Auto-executes LOCK/UNLOCK commands
 - Marks commands as processed
@@ -38,6 +41,7 @@ SupabaseCommandListener().startListening(deviceId);
 ```
 
 #### 3. **Created: lib/services/simple_google_auth.dart** ✅
+
 Personal + workspace accounts both work FULLY - NO RESTRICTIONS
 
 ```dart
@@ -47,18 +51,21 @@ await auth.signIn();  // Works with ANY Google account
 ```
 
 **Why This Matters:**
+
 - Personal accounts: ✅ Full features
 - Workspace accounts: ✅ Full features
 - No account type checking
 - All users are equal
 
 #### 4. **Updated: lib/main.dart** ✅
+
 - ✅ Added `SupabaseCommandListener` initialization
 - ✅ Added imports for new services
 - ✅ Removed old workspace auth restrictions
 - ✅ Proper cleanup in `dispose()`
 
 #### 5. **Deleted Files** ✅
+
 - ❌ `workspace_auth_service.dart` (was restricting personal accounts)
 - ❌ `background_command_listener.dart` (was using Firebase - replaced with Supabase)
 
@@ -90,12 +97,14 @@ await auth.signIn();  // Works with ANY Google account
 ## 🔧 How to Complete the Setup
 
 ### Step 1: Run flutter pub get
+
 ```bash
 cd /Users/anupampradhan/Desktop/FONEX
 flutter pub get
 ```
 
 ### Step 2: Verify No Errors
+
 ```bash
 flutter analyze
 ```
@@ -103,6 +112,7 @@ flutter analyze
 ✅ Only info-level hints (no errors!)
 
 ### Step 3: Build APK
+
 ```bash
 flutter build apk --release
 ```
@@ -110,6 +120,7 @@ flutter build apk --release
 ### Step 4: Test on Device
 
 **What to Test:**
+
 1. ✅ Lock works when app is closed
 2. ✅ Unlock works when app is closed
 3. ✅ Factory reset blocked when amount unpaid
@@ -124,6 +135,7 @@ flutter build apk --release
 You already have this configured. Verify it exists:
 
 ### 1. **Supabase Project** ✅
+
 - Project ID: (check your Dashboard)
 - URL: (check your Dashboard)
 - Anon Key: (check your Dashboard)
@@ -131,6 +143,7 @@ You already have this configured. Verify it exists:
 ### 2. **Database Tables** (Should already exist)
 
 **device_commands table:**
+
 ```sql
 - id (UUID, PK)
 - device_id (TEXT)
@@ -141,6 +154,7 @@ You already have this configured. Verify it exists:
 ```
 
 **devices table** (if not exists, create):
+
 ```sql
 - id (UUID, PK)
 - device_id (TEXT, UNIQUE)
@@ -153,6 +167,7 @@ You already have this configured. Verify it exists:
 ```
 
 ### 3. **Realtime Enabled** ✅
+
 Settings → Replication → Enable for `public.device_commands`
 
 ---
@@ -175,6 +190,7 @@ Settings → Replication → Enable for `public.device_commands`
    - Verify in: `android/app/src/main/kotlin/...`
 
 4. **Test on Real Device**
+
    ```bash
    flutter run --release
    ```
@@ -188,23 +204,24 @@ Settings → Replication → Enable for `public.device_commands`
 
 ## ✅ What Works Now
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Personal Google login | ✅ Full access | No restrictions |
-| Workspace Google login | ✅ Full access | No restrictions |
-| Lock via Supabase | ✅ Ready | Uses SupabaseCommandListener |
-| Unlock via Supabase | ✅ Ready | Uses SupabaseCommandListener |
-| Factory reset block | ✅ Works | Android native layer |
-| State sync | ✅ Complete | DeviceStateManager |
-| Precise day calc | ✅ Complete | PreciseTimingService ready |
-| Debug panel | ✅ Complete | UI ready, needs accessibility |
-| No Firebase needed | ✅ Removed | Uses Supabase only |
+| Feature                | Status         | Notes                         |
+| ---------------------- | -------------- | ----------------------------- |
+| Personal Google login  | ✅ Full access | No restrictions               |
+| Workspace Google login | ✅ Full access | No restrictions               |
+| Lock via Supabase      | ✅ Ready       | Uses SupabaseCommandListener  |
+| Unlock via Supabase    | ✅ Ready       | Uses SupabaseCommandListener  |
+| Factory reset block    | ✅ Works       | Android native layer          |
+| State sync             | ✅ Complete    | DeviceStateManager            |
+| Precise day calc       | ✅ Complete    | PreciseTimingService ready    |
+| Debug panel            | ✅ Complete    | UI ready, needs accessibility |
+| No Firebase needed     | ✅ Removed     | Uses Supabase only            |
 
 ---
 
 ## 📝 Code Examples
 
 ### Listen for Commands
+
 ```dart
 final listener = SupabaseCommandListener();
 listener.initialize();
@@ -215,6 +232,7 @@ listener.startListening('device-123');
 ```
 
 ### Sign In (Any Account)
+
 ```dart
 final auth = SimpleGoogleAuth();
 await auth.signIn(); // Personal OR workspace
@@ -226,6 +244,7 @@ if (auth.isSignedIn()) {
 ```
 
 ### Get Time Remaining
+
 ```dart
 final timing = PreciseTimingService();
 final (days, seconds) = await timing.getRemainingDaysAndSeconds();

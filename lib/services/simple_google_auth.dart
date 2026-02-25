@@ -41,11 +41,10 @@ class SimpleGoogleAuth {
         idToken: googleAuth.idToken,
       );
 
-      final userCredential =
-          await FirebaseAuth.instance.signInWithCredential(credential);
-      AppLogger.log(
-        'Signed in: ${userCredential.user?.email}',
+      final userCredential = await FirebaseAuth.instance.signInWithCredential(
+        credential,
       );
+      AppLogger.log('Signed in: ${userCredential.user?.email}');
 
       return userCredential;
     } catch (e) {

@@ -62,6 +62,7 @@ VALUES ('your-device-id', 'UNLOCK');
 ```
 
 **How It Works:**
+
 1. You insert command in Supabase
 2. App listens via Supabase Realtime (even with app closed!)
 3. App receives command
@@ -81,6 +82,7 @@ adb install build/app/outputs/flutter-apk/app-release.apk
 ```
 
 **Test Checklist:**
+
 - [ ] App starts normally
 - [ ] Google login works (personal account)
 - [ ] Lock works (app open)
@@ -98,28 +100,36 @@ adb install build/app/outputs/flutter-apk/app-release.apk
 ## 5. Key Files to Know
 
 ### `lib/services/supabase_command_listener.dart` (NEW)
+
 Listens for lock/unlock commands via Supabase Realtime.
+
 - Automatically starts when app initializes
 - Works in foreground and background
 - Uses your existing Supabase credentials
 
 ### `lib/services/simple_google_auth.dart` (NEW)
+
 Simplified Google authentication - any account works.
+
 - Personal accounts: ✅ Full features
 - Workspace accounts: ✅ Full features
 - No restrictions or account checking
 
 ### `lib/main.dart` (UPDATED)
+
 - Added SupabaseCommandListener initialization
 - Removed Firebase-based background listener
 - Removed workspace account restrictions
 
 ### `pubspec.yaml` (UPDATED)
+
 **Removed:**
+
 - ❌ `firebase_messaging` (not needed)
 - ❌ `firebase_database` (not needed)
 
 **Kept:**
+
 - ✅ `firebase_auth` (for Google Sign-In)
 - ✅ `supabase_flutter` (your database)
 
@@ -135,6 +145,7 @@ Anon Key: eyJ... (from Settings → API)
 ```
 
 In `lib/config.dart`:
+
 ```dart
 // These should match your Supabase project
 const String supabaseUrl = 'https://[your-project].supabase.co';
@@ -165,6 +176,7 @@ Device Locked/Unlocked ✅
 ```
 
 **Key Point:** Works even if app is closed because:
+
 1. Supabase Realtime is a persistent connection
 2. App auto-reconnects on startup
 3. Commands are stored in database (not lost)
@@ -174,20 +186,24 @@ Device Locked/Unlocked ✅
 ## 8. Troubleshooting
 
 ### "Device lock failed"
+
 - Check: Is Device Owner set up? Run `provision_device.sh`
 - Check: Is app set as device owner? (Settings → Device Admin)
 
 ### "Commands not received"
+
 - Check: Supabase Realtime enabled for device_commands table
 - Check: Command inserted in correct format (device_id TEXT, command TEXT)
 - Check: App has internet connection
 
 ### "Personal account says no access"
+
 - This shouldn't happen - all accounts are equal now
 - Check: You're using `SimpleGoogleAuth` (not old WorkspaceAuthService)
 - Check: main.dart imports are correct
 
 ### "State mismatched"
+
 - DeviceStateManager should sync automatically
 - Tap "Sync" button in developer debug panel
 
@@ -196,6 +212,7 @@ Device Locked/Unlocked ✅
 ## 9. Next Steps
 
 1. **Build & Deploy APK**
+
    ```bash
    flutter build apk --release
    ```
@@ -218,19 +235,24 @@ Device Locked/Unlocked ✅
 ## 10. Support & Debugging
 
 ### Enable Debug Logging
+
 In `lib/services/app_logger.dart`, logs are already enabled:
+
 ```dart
 AppLogger.log('Message'); // Prints to console & file
 ```
 
 ### View Logs
+
 ```bash
 flutter logs | grep SupabaseCommandListener
 flutter logs | grep DeviceStateManager
 ```
 
 ### Developer Debug Panel
+
 In `lib/main.dart`, you can add a tap gesture on the FONEX logo to show the debug panel:
+
 ```dart
 // Shows real-time state, logs, and sync button
 DeveloperDebugPanel().show();
