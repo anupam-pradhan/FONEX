@@ -7,8 +7,8 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'package:fonex/services/app_logger.dart';
 import 'package:http/http.dart' as http;
-import 'package:flutter/foundation.dart';
 import '../config.dart';
 import 'device_storage_service.dart';
 
@@ -72,7 +72,7 @@ class SyncService {
           imei: imei,
           metadata: metadata,
         );
-        debugPrint('✅ Device registration saved locally');
+        AppLogger.log('✅ Device registration saved locally');
       }
 
       // Try to sync with server
@@ -85,7 +85,7 @@ class SyncService {
       if (syncSuccess) {
         await DeviceStorageService.markFirstRegistrationComplete();
         await DeviceStorageService.updateLastSyncTimestamp();
-        debugPrint('✅ Device registration synced to server');
+        AppLogger.log('✅ Device registration synced to server');
         return true;
       } else {
         // If sync fails, queue it for later retry
@@ -95,11 +95,11 @@ class SyncService {
           'imei': imei,
           'metadata': metadata,
         });
-        debugPrint('⚠️ Device registration queued for retry');
+        AppLogger.log('⚠️ Device registration queued for retry');
         return false; // Will retry later
       }
     } catch (e) {
-      debugPrint('❌ Error during device registration: $e');
+      AppLogger.log('❌ Error during device registration: $e');
       await DeviceStorageService.trackFailedSync('Registration error: $e');
       return false;
     }
@@ -134,13 +134,38 @@ class SyncService {
       if (response.statusCode == 200 || response.statusCode == 201) {
         return true;
       } else {
-        debugPrint('Server returned status: ${response.statusCode}');
+        AppLogger.log('Server returned status: ${response.statusCode}');
         return false;
       }
     } catch (e) {
-      debugPrint('Network error during registration sync: $e');
+      AppLogger.log('Network error during registration sync: $e');
       return false;
     }
+  }
+
+  Future<void> _queueCheckInForRetry({
+    required String deviceHash,
+    required String imei,
+    required DateTime lastSeenAt,
+    String? deviceId,
+    int? batteryLevel,
+    bool? isLocked,
+    int? daysRemaining,
+    Map<String, dynamic>? metadata,
+  }) async {
+    if (_isProcessingFromQueue) return;
+    final queueItem = <String, dynamic>{
+      'type': 'checkin',
+      'device_hash': deviceHash,
+      'imei': imei,
+      'last_seen': lastSeenAt.toIso8601String(),
+      if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
+      if (batteryLevel != null) 'battery': batteryLevel,
+      if (isLocked != null) 'is_locked': isLocked,
+      if (daysRemaining != null) 'days_remaining': daysRemaining,
+      if (metadata != null && metadata.isNotEmpty) 'metadata': metadata,
+    };
+    await DeviceStorageService.addToSyncQueue(queueItem);
   }
 
   /// Perform device check-in with optimized retry logic
@@ -203,19 +228,16 @@ class SyncService {
           continue;
         } else {
           // Queue for later retry — but not if we're already processing from queue
-          if (!_isProcessingFromQueue) {
-            await DeviceStorageService.addToSyncQueue({
-              'type': 'checkin',
-              'device_hash': deviceHash,
-              'device_id': ?deviceId,
-              'imei': imei,
-              'battery': batteryLevel,
-              'last_seen': (lastSeen ?? DateTime.now()).toIso8601String(),
-              'is_locked': ?isLocked,
-              'days_remaining': ?daysRemaining,
-              'metadata': ?metadata,
-            });
-          }
+          await _queueCheckInForRetry(
+            deviceHash: deviceHash,
+            imei: imei,
+            lastSeenAt: lastSeen ?? DateTime.now(),
+            deviceId: deviceId,
+            batteryLevel: batteryLevel,
+            isLocked: isLocked,
+            daysRemaining: daysRemaining,
+            metadata: metadata,
+          );
           return null;
         }
       } catch (e) {
@@ -225,18 +247,17 @@ class SyncService {
           continue;
         } else {
           // Queue for later retry — but not if we're already processing from queue
+          await _queueCheckInForRetry(
+            deviceHash: deviceHash,
+            imei: imei,
+            lastSeenAt: lastSeen ?? DateTime.now(),
+            deviceId: deviceId,
+            batteryLevel: batteryLevel,
+            isLocked: isLocked,
+            daysRemaining: daysRemaining,
+            metadata: metadata,
+          );
           if (!_isProcessingFromQueue) {
-            await DeviceStorageService.addToSyncQueue({
-              'type': 'checkin',
-              'device_hash': deviceHash,
-              'device_id': ?deviceId,
-              'imei': imei,
-              'battery': batteryLevel,
-              'last_seen': (lastSeen ?? DateTime.now()).toIso8601String(),
-              'is_locked': ?isLocked,
-              'days_remaining': ?daysRemaining,
-              'metadata': ?metadata,
-            });
             await DeviceStorageService.trackFailedSync('Check-in error: $e');
           }
           return null;
@@ -253,7 +274,7 @@ class SyncService {
   /// Process pending sync queue items
   Future<void> _processSyncQueue() async {
     if (_isSyncing) {
-      debugPrint('⏳ Sync already in progress, skipping...');
+      AppLogger.log('⏳ Sync already in progress, skipping...');
       return;
     }
 
@@ -264,7 +285,7 @@ class SyncService {
         return;
       }
 
-      debugPrint('📤 Processing sync queue: ${queue.length} items');
+      AppLogger.log('📤 Processing sync queue: ${queue.length} items');
 
       // Process items in batches
       final batches = <List<Map<String, dynamic>>>[];
@@ -284,7 +305,7 @@ class SyncService {
         }
       }
     } catch (e) {
-      debugPrint('❌ Error processing sync queue: $e');
+      AppLogger.log('❌ Error processing sync queue: $e');
     } finally {
       _isSyncing = false;
     }
@@ -307,7 +328,7 @@ class SyncService {
 
         // Skip if retried too many times
         if (retryCount >= _maxRetries) {
-          debugPrint('⚠️ Skipping item after $retryCount retries');
+          AppLogger.log('⚠️ Skipping item after $retryCount retries');
           indicesToRemove.add(queueIndex);
           continue;
         }
@@ -341,25 +362,33 @@ class SyncService {
 
           if (success) {
             indicesToRemove.add(queueIndex);
-            debugPrint('✅ Synced item: $type');
+            AppLogger.log('✅ Synced item: $type');
           } else {
             indicesToRetry.add(queueIndex);
           }
         } catch (e) {
-          debugPrint('❌ Error syncing item: $e');
+          AppLogger.log('❌ Error syncing item: $e');
           indicesToRetry.add(queueIndex);
         }
       }
 
-      // Remove in reverse order to preserve indices
-      indicesToRemove.sort((a, b) => b.compareTo(a));
-      for (final idx in indicesToRemove) {
-        await DeviceStorageService.removeFromSyncQueue(idx);
-      }
-      // Increment retry counts (also in reverse to preserve indices)
-      indicesToRetry.sort((a, b) => b.compareTo(a));
+      // Apply queue mutations from highest index to lowest, so each operation
+      // remains valid even when remove and retry targets overlap in one batch.
+      final actionByIndex = <int, bool>{}; // true=remove, false=retry
       for (final idx in indicesToRetry) {
-        await DeviceStorageService.incrementRetryCount(idx);
+        actionByIndex[idx] = false;
+      }
+      for (final idx in indicesToRemove) {
+        actionByIndex[idx] = true;
+      }
+      final sortedIndices = actionByIndex.keys.toList()
+        ..sort((a, b) => b.compareTo(a));
+      for (final idx in sortedIndices) {
+        if (actionByIndex[idx] == true) {
+          await DeviceStorageService.removeFromSyncQueue(idx);
+        } else {
+          await DeviceStorageService.incrementRetryCount(idx);
+        }
       }
     } finally {
       _isProcessingFromQueue = false;
@@ -372,7 +401,7 @@ class SyncService {
 
   /// Manually trigger sync (called from UI)
   Future<bool> manualSync() async {
-    debugPrint('🔄 Manual sync triggered');
+    AppLogger.log('🔄 Manual sync triggered');
     await _processSyncQueue();
     final queue = await DeviceStorageService.getSyncQueue();
     return queue.isEmpty;

@@ -470,7 +470,13 @@ class DeviceLockManager(private val context: Context) {
     private fun allowNormalGoogleAccounts() {
         // Block work/enterprise account types that trigger work profile setup
         // on some OEM devices (Samsung, Xiaomi, etc.) after Device Owner provisioning.
-        val blockedWorkTypes = listOf("com.google.work", "com.android.exchange")
+        val blockedWorkTypes = listOf(
+            "com.google.work", 
+            "com.android.exchange",
+            "com.google.android.work",
+            "com.google.android.gm.exchange",
+            "com.google.android.apps.enterprise.dmagent"
+        )
         blockedWorkTypes.forEach { accountType ->
             try {
                 devicePolicyManager.setAccountManagementDisabled(

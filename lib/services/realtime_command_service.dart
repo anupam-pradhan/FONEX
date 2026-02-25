@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:fonex/services/app_logger.dart';
 
 import '../config.dart';
 
@@ -59,7 +60,7 @@ class RealtimeCommandService {
     if (_isStarted) return;
 
     if (deviceId.isEmpty) {
-      debugPrint('Realtime disabled: empty device id');
+      AppLogger.log('Realtime disabled: empty device id');
       return;
     }
     if (FonexConfig.supabaseUrl.isEmpty ||
@@ -149,7 +150,7 @@ class RealtimeCommandService {
       if (status == RealtimeSubscribeStatus.subscribed) {
         _reconnectAttempt = 0;
         _isSubscribed = true;
-        debugPrint('Realtime subscribed for device $deviceId');
+        AppLogger.log('Realtime subscribed for device $deviceId');
         return;
       }
 
@@ -175,7 +176,7 @@ class RealtimeCommandService {
       try {
         await Supabase.instance.client.removeChannel(existing);
       } catch (e) {
-        debugPrint('Failed to remove realtime channel: $e');
+        AppLogger.log('Failed to remove realtime channel: $e');
       }
     }
   }
@@ -184,7 +185,7 @@ class RealtimeCommandService {
     try {
       final dynamic newRecord = payload.newRecord;
       if (newRecord is! Map) {
-        debugPrint('Ignoring realtime payload with invalid record format');
+        AppLogger.log('Ignoring realtime payload with invalid record format');
         return;
       }
 
@@ -231,8 +232,8 @@ class RealtimeCommandService {
       );
       unawaited(_executeCommand(event));
     } catch (e, stackTrace) {
-      debugPrint('Failed to parse realtime payload: $e');
-      debugPrint('$stackTrace');
+      AppLogger.log('Failed to parse realtime payload: $e');
+      AppLogger.log('$stackTrace');
     }
   }
 
@@ -243,8 +244,8 @@ class RealtimeCommandService {
       await handler(command);
       await _markCommandProcessed(command.commandId);
     } catch (e, stackTrace) {
-      debugPrint('Realtime command failed ${command.commandId}: $e');
-      debugPrint('$stackTrace');
+      AppLogger.log('Realtime command failed ${command.commandId}: $e');
+      AppLogger.log('$stackTrace');
     } finally {
       _inFlightCommandIds.remove(command.commandId);
     }
@@ -320,7 +321,7 @@ class RealtimeCommandService {
     final resolvedDeviceId = deviceId ?? _deviceId ?? '';
     if (resolvedDeviceId.isEmpty) return;
     if (FonexConfig.deviceSecret.isEmpty) {
-      debugPrint('ACK skipped: DEVICE_SECRET is not configured');
+      AppLogger.log('ACK skipped: DEVICE_SECRET is not configured');
       return;
     }
 
@@ -372,7 +373,7 @@ class RealtimeCommandService {
       await Future.delayed(Duration(seconds: delaySeconds));
     }
 
-    debugPrint('ACK failed for command $commandId after $maxAttempts attempts');
+    AppLogger.log('ACK failed for command $commandId after $maxAttempts attempts');
   }
 
   String _normalize(dynamic value) => value?.toString().trim() ?? '';

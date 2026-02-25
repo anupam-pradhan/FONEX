@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:convert';
 import 'config.dart';
+import 'services/app_logger.dart';
 import 'services/device_storage_service.dart';
 import 'services/realtime_command_service.dart';
 import 'services/sync_service.dart';
@@ -31,6 +32,7 @@ const String _keyDeviceLocked = FonexConfig.keyDeviceLocked;
 const String _keySimAbsentSince = FonexConfig.keySimAbsentSince;
 const String _keyLockWindowDays = 'lock_window_days';
 const String _keyBackgroundPromptShown = 'background_prompt_shown';
+const int _fallbackServerCheckSeconds = 60;
 const String _serverBaseUrl = FonexConfig.serverBaseUrl;
 const String _supportPhone1 = FonexConfig.supportPhone1;
 const String _supportPhone2 = FonexConfig.supportPhone2;
@@ -87,7 +89,7 @@ Future<void> main() async {
         anonKey: FonexConfig.supabaseAnonKey,
       );
     } catch (e) {
-      debugPrint('Supabase initialization failed: $e');
+      AppLogger.log('Supabase initialization failed: $e');
     }
   } else {
     debugPrint(
@@ -201,6 +203,7 @@ class _AnimatedGradientBgState extends State<AnimatedGradientBg>
       animation: _controller,
       builder: (context, child) {
         return Container(
+          constraints: const BoxConstraints.expand(),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -742,12 +745,27 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     _simCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted && !_isPaidInFull) _checkSimState();
     });
-    // Lightweight heartbeat every 5 minutes
+    // Frequent fallback heartbeat; effective interval remains larger while realtime is healthy.
     _serverCheckInTimer = Timer.periodic(
-      Duration(minutes: FonexConfig.serverCheckInIntervalMinutes),
+      const Duration(seconds: _fallbackServerCheckSeconds),
       (_) {
         RealtimeCommandService().ensureConnected();
-        if (mounted && !_isConnecting) unawaited(_serverCheckIn());
+        if (!mounted || _isConnecting) return;
+        if (!_isPaidInFull) {
+          unawaited(_checkTimerAndLock());
+        }
+
+        final realtimeHealthy = RealtimeCommandService().isSubscribed;
+        final lastSync = _lastServerSync;
+        final minutesSinceLastSync = lastSync == null
+            ? FonexConfig.serverCheckInIntervalMinutes
+            : DateTime.now().difference(lastSync).inMinutes;
+        final shouldCheckNow =
+            !realtimeHealthy ||
+            minutesSinceLastSync >= FonexConfig.serverCheckInIntervalMinutes;
+        if (shouldCheckNow) {
+          unawaited(_serverCheckIn());
+        }
       },
     );
   }
@@ -777,7 +795,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             _keySimAbsentSince,
             DateTime.now().millisecondsSinceEpoch,
           );
-          debugPrint('SIM absent detected — grace period started (7 days).');
+          AppLogger.log('SIM absent detected — grace period started (7 days).');
         } else {
           final daysMissing = DateTime.now()
               .difference(DateTime.fromMillisecondsSinceEpoch(absentSince))
@@ -802,11 +820,11 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         // SIM present — clear the absent timer
         if (prefs.containsKey(_keySimAbsentSince)) {
           await prefs.remove(_keySimAbsentSince);
-          debugPrint('SIM detected — grace period cleared.');
+          AppLogger.log('SIM detected — grace period cleared.');
         }
       }
     } on PlatformException catch (e) {
-      debugPrint('Error checking SIM state: $e');
+      AppLogger.log('Error checking SIM state: $e');
     }
   }
 
@@ -820,6 +838,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       // Debounce rapid state changes
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) {
+          unawaited(_refreshLockStateFromNative());
           _checkTimerAndLock();
           _checkSimState();
           unawaited(_ensureConnectivityForLockedMode());
@@ -844,6 +863,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     _daysRemaining = storedWindow;
 
     await _checkDeviceOwner();
+    await _refreshLockStateFromNative();
     if (isPaidInFull) {
       await _activatePaidInFullMode(refreshOwnerState: true);
     } else {
@@ -886,12 +906,89 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     return null;
   }
 
+  int _calculateRemainingDays(SharedPreferences prefs, int lockWindowDays) {
+    final lastVerifiedMs = prefs.getInt(_keyLastVerified);
+    if (lastVerifiedMs == null) return lockWindowDays;
+    final lastVerified = DateTime.fromMillisecondsSinceEpoch(lastVerifiedMs);
+    final daysSince = DateTime.now().difference(lastVerified).inDays;
+    return (lockWindowDays - daysSince).clamp(0, lockWindowDays);
+  }
+
+  Future<bool> _readNativeDeviceLocked() async {
+    try {
+      final nativeLocked = await _channel.invokeMethod<bool>('isDeviceLocked');
+      return nativeLocked ?? _isDeviceLocked;
+    } on PlatformException catch (e) {
+      AppLogger.log('Error reading native lock state: $e');
+      return _isDeviceLocked;
+    }
+  }
+
+  Future<void> _refreshLockStateFromNative() async {
+    final nativeLocked = await _readNativeDeviceLocked();
+    final prefs = await SharedPreferences.getInstance();
+    final persistedLocked = prefs.getBool(_keyDeviceLocked) ?? false;
+    if (persistedLocked != nativeLocked) {
+      await prefs.setBool(_keyDeviceLocked, nativeLocked);
+    }
+
+    if (!mounted) {
+      _isDeviceLocked = nativeLocked;
+      return;
+    }
+
+    if (nativeLocked != _isDeviceLocked) {
+      setState(() {
+        _isDeviceLocked = nativeLocked;
+        if (nativeLocked) {
+          _daysRemaining = 0;
+        } else {
+          final windowDays = _readLockWindowDays(prefs);
+          _lockWindowDays = windowDays;
+          _daysRemaining = _calculateRemainingDays(prefs, windowDays);
+        }
+      });
+    }
+  }
+
+  Future<void> _syncServerRemainingDays(int remainingDays) async {
+    if (_isPaidInFull || _isDeviceLocked) return;
+    final normalizedRemaining = _normalizeLockWindowDays(remainingDays);
+    final prefs = await SharedPreferences.getInstance();
+    final windowDays = _readLockWindowDays(prefs);
+    final currentRemaining = _calculateRemainingDays(prefs, windowDays);
+
+    // Avoid jitter when server and local values differ only by timezone/rounding.
+    if ((currentRemaining - normalizedRemaining).abs() <= 1) {
+      return;
+    }
+
+    final newWindowDays = windowDays < normalizedRemaining
+        ? normalizedRemaining
+        : windowDays;
+    await prefs.setInt(_keyLockWindowDays, newWindowDays);
+    final anchor = DateTime.now().subtract(
+      Duration(days: newWindowDays - normalizedRemaining),
+    );
+    await prefs.setInt(_keyLastVerified, anchor.millisecondsSinceEpoch);
+
+    if (mounted) {
+      setState(() {
+        _lockWindowDays = newWindowDays;
+        _daysRemaining = normalizedRemaining;
+      });
+    }
+    AppLogger.log(
+      'Server remaining days synced accurately: $normalizedRemaining day(s)',
+    );
+  }
+
   Future<void> _checkDeviceOwner() async {
     try {
       final isOwner = await _channel.invokeMethod<bool>('isDeviceOwner');
       if (mounted) setState(() => _isDeviceOwner = isOwner ?? false);
     } on PlatformException catch (e) {
-      debugPrint('Error checking device owner: $e');
+      AppLogger.log('Error checking device owner: $e');
       if (mounted) setState(() => _isDeviceOwner = false);
     }
   }
@@ -932,10 +1029,14 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
 
     final wasLocked = prefs.getBool(_keyDeviceLocked) ?? false;
+    final nativeLocked = await _readNativeDeviceLocked();
 
-    // If explicitly marked locked in prefs, re-engage lock
-    if (wasLocked) {
-      final locked = await _engageDeviceLock();
+    // If locked in persisted/native state, keep lock active.
+    if (wasLocked || nativeLocked) {
+      final locked = nativeLocked ? true : await _engageDeviceLock();
+      if (!nativeLocked) {
+        await prefs.setBool(_keyDeviceLocked, locked);
+      }
       if (locked && mounted) {
         setState(() {
           _isDeviceLocked = true;
@@ -971,6 +1072,12 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   Future<bool> _engageDeviceLock() async {
     if (_isPaidInFull) return false;
     try {
+      final nativeLocked = await _readNativeDeviceLocked();
+      if (nativeLocked) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_keyDeviceLocked, true);
+        return true;
+      }
       final started = await _channel.invokeMethod<bool>('startDeviceLock');
       if (started != true) {
         await _checkDeviceOwner();
@@ -983,7 +1090,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       await prefs.setBool(_keyDeviceLocked, true);
       return true;
     } on PlatformException catch (e) {
-      debugPrint('Error engaging device lock: $e');
+      AppLogger.log('Error engaging device lock: $e');
       return false;
     }
   }
@@ -1004,9 +1111,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
     try {
       await _channel.invokeMethod('setPaidInFull', {'paid': true});
-      debugPrint('Paid in full mode applied: restrictions removed');
+      AppLogger.log('Paid in full mode applied: restrictions removed');
     } on PlatformException catch (e) {
-      debugPrint('Error applying paid in full mode: $e');
+      AppLogger.log('Error applying paid in full mode: $e');
     }
 
     if (refreshOwnerState) {
@@ -1017,24 +1124,43 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   Future<void> _activateEmiRunningMode({
     int? days,
     bool refreshOwnerState = false,
+    bool forceResetAnchor = false,
   }) async {
     final prefs = await SharedPreferences.getInstance();
+    final wasPaidInFull =
+        prefs.getBool('is_paid_in_full') == true || _isPaidInFull;
     await prefs.setBool('is_paid_in_full', false);
+    var effectiveDays = _readLockWindowDays(prefs);
+
     if (days != null) {
       final normalizedDays = _normalizeLockWindowDays(days);
+      final previousWindowDays = _readLockWindowDays(prefs);
       await prefs.setInt(_keyLockWindowDays, normalizedDays);
-      if (!_isDeviceLocked) {
+      effectiveDays = normalizedDays;
+      final hasAnchor = prefs.getInt(_keyLastVerified) != null;
+      if (!_isDeviceLocked &&
+          (!hasAnchor ||
+              forceResetAnchor ||
+              wasPaidInFull ||
+              previousWindowDays != normalizedDays)) {
         await prefs.setInt(
           _keyLastVerified,
           DateTime.now().millisecondsSinceEpoch,
         );
       }
-      if (mounted) {
-        setState(() {
-          _lockWindowDays = normalizedDays;
-          if (!_isDeviceLocked) _daysRemaining = normalizedDays;
-        });
-      }
+    } else if (prefs.getInt(_keyLastVerified) == null && !_isDeviceLocked) {
+      await prefs.setInt(
+        _keyLastVerified,
+        DateTime.now().millisecondsSinceEpoch,
+      );
+    }
+
+    final remainingDays = _calculateRemainingDays(prefs, effectiveDays);
+    if (mounted) {
+      setState(() {
+        _lockWindowDays = effectiveDays;
+        if (!_isDeviceLocked) _daysRemaining = remainingDays;
+      });
     }
 
     if (_isPaidInFull && mounted) {
@@ -1045,9 +1171,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
     try {
       await _channel.invokeMethod('setPaidInFull', {'paid': false});
-      debugPrint('Due mode applied: launcher warning wallpaper enforced');
+      AppLogger.log('Due mode applied: launcher warning wallpaper enforced');
     } on PlatformException catch (e) {
-      debugPrint('Error applying due mode: $e');
+      AppLogger.log('Error applying due mode: $e');
     }
 
     if (refreshOwnerState) {
@@ -1058,9 +1184,27 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   /// FIX: Properly clear locked flag AND reset timer so device doesn't re-lock immediately.
   Future<bool> _disengageDeviceLock() async {
     try {
+      final nativeLocked = await _readNativeDeviceLocked();
+      if (!nativeLocked) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(_keyDeviceLocked, false);
+        await prefs.remove(_keySimAbsentSince);
+        await prefs.setInt(
+          _keyLastVerified,
+          DateTime.now().millisecondsSinceEpoch,
+        );
+        if (mounted) {
+          setState(() {
+            _isDeviceLocked = false;
+            _daysRemaining = _lockWindowDays;
+          });
+        }
+        return true;
+      }
+
       final stopped = await _channel.invokeMethod<bool>('stopDeviceLock');
       if (stopped != true) {
-        debugPrint('Device unlock request rejected by native layer.');
+        AppLogger.log('Device unlock request rejected by native layer.');
         return false;
       }
       final prefs = await SharedPreferences.getInstance();
@@ -1081,7 +1225,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       }
       return true;
     } on PlatformException catch (e) {
-      debugPrint('Error disengaging device lock: $e');
+      AppLogger.log('Error disengaging device lock: $e');
       return false;
     }
   }
@@ -1106,11 +1250,12 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   Future<bool> unlockDeviceLocally() => _disengageDeviceLock();
 
   Future<void> _handleRealtimeCommand(DeviceRealtimeCommand command) async {
+    await _refreshLockStateFromNative();
     bool executed = false;
     switch (command.command) {
       case 'LOCK':
         if (_isPaidInFull) {
-          debugPrint('Ignoring realtime LOCK: device is paid in full.');
+          AppLogger.log('Ignoring realtime LOCK: device is paid in full.');
           executed = true;
           break;
         }
@@ -1187,10 +1332,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         'ensureConnectivityForLock',
       );
       if (result != null) {
-        debugPrint('Connectivity checked for lock state: $result');
+        AppLogger.log('Connectivity checked for lock state: $result');
       }
     } catch (e) {
-      debugPrint('Connectivity recovery skipped: $e');
+      AppLogger.log('Connectivity recovery skipped: $e');
     }
   }
 
@@ -1215,7 +1360,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       }
       await prefs.setBool(_keyBackgroundPromptShown, true);
     } catch (e) {
-      debugPrint('Background protection setup skipped: $e');
+      AppLogger.log('Background protection setup skipped: $e');
     }
   }
 
@@ -1298,6 +1443,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       );
 
       if (response != null) {
+        await _refreshLockStateFromNative();
         final serverDeviceId = (response['device_id'] ?? response['id'])
             ?.toString()
             .trim();
@@ -1325,14 +1471,20 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             response['is_locked'] == true ||
             response['locked'] == true ||
             (response['status']?.toString().toLowerCase() == 'locked');
-        final serverDays =
+        final serverTenureDays =
             _parseServerDays(response['days']) ??
-            _parseServerDays(response['days_remaining']) ??
             _parseServerDays(response['tenure']);
+        final serverRemainingDays = _parseServerDays(
+          response['days_remaining'],
+        );
+        final serverDays = serverTenureDays ?? serverRemainingDays;
         if (serverPaidInFull && !_isPaidInFull) {
           await _activatePaidInFullMode(refreshOwnerState: true);
         } else if (!serverPaidInFull) {
           await _activateEmiRunningMode(days: serverDays);
+          if (serverRemainingDays != null) {
+            await _syncServerRemainingDays(serverRemainingDays);
+          }
           if (serverLocked && !_isDeviceLocked) {
             final locked = await _engageDeviceLock();
             if (locked && mounted) {
@@ -1341,48 +1493,41 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
                 _daysRemaining = 0;
               });
             }
-            debugPrint('Server state lock sync applied: $locked');
+            AppLogger.log('Server state lock sync applied: $locked');
           }
         }
 
         final rawAction = response['action'] as String? ?? 'none';
         final action = rawAction.toLowerCase();
 
-        debugPrint('Server check-in response: action=$action');
+        AppLogger.log('Server check-in response: action=$action');
 
-        final realtimeHealthy = RealtimeCommandService().isSubscribed;
-        // Prefer realtime for lock/unlock, but fail over to heartbeat action
-        // when realtime is disconnected to avoid missed lock commands.
         switch (action) {
           case 'lock':
-            if (realtimeHealthy) {
-              debugPrint('Ignoring lock from heartbeat (realtime is active).');
-              break;
+            if (!_isPaidInFull) {
+              await _refreshLockStateFromNative();
+              final locked = _isDeviceLocked ? true : await _engageDeviceLock();
+              if (locked && mounted) {
+                setState(() {
+                  _isDeviceLocked = true;
+                  _daysRemaining = 0;
+                });
+              }
+              AppLogger.log('Server action lock applied: $locked');
             }
-            final locked = await _engageDeviceLock();
-            if (locked && mounted) {
-              setState(() {
-                _isDeviceLocked = true;
-                _daysRemaining = 0;
-              });
-            }
-            debugPrint('Fallback lock from heartbeat applied: $locked');
             break;
           case 'unlock':
-            if (realtimeHealthy) {
-              debugPrint(
-                'Ignoring unlock from heartbeat (realtime is active).',
-              );
-              break;
+            await _refreshLockStateFromNative();
+            if (_isDeviceLocked) {
+              final unlocked = await _disengageDeviceLock();
+              if (unlocked && mounted) {
+                setState(() {
+                  _isDeviceLocked = false;
+                  _daysRemaining = _lockWindowDays;
+                });
+              }
+              AppLogger.log('Server action unlock applied: $unlocked');
             }
-            final unlocked = await _disengageDeviceLock();
-            if (unlocked && mounted) {
-              setState(() {
-                _isDeviceLocked = false;
-                _daysRemaining = _lockWindowDays;
-              });
-            }
-            debugPrint('Fallback unlock from heartbeat applied: $unlocked');
             break;
           case 'extend':
           case 'extend_days':
@@ -1391,19 +1536,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
                 _parseServerDays(response['days_remaining']) ??
                 _parseServerDays(response['tenure']) ??
                 _lockAfterDays;
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setInt(_keyLockWindowDays, days);
-            await prefs.setInt(
-              _keyLastVerified,
-              DateTime.now().millisecondsSinceEpoch,
-            );
-            if (mounted) {
-              setState(() {
-                _lockWindowDays = days;
-                _daysRemaining = days;
-              });
-            }
-            debugPrint('Device extended by server: $days days');
+            await _activateEmiRunningMode(days: days, forceResetAnchor: true);
+            AppLogger.log('Device extended by server: $days days');
             break;
           case 'paid_in_full':
           case 'mark_paid_in_full':
@@ -1412,26 +1546,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             await _activatePaidInFullMode(refreshOwnerState: true);
             break;
           case 'none':
-            if (serverDays != null) {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setInt(_keyLockWindowDays, serverDays);
-              await prefs.setInt(
-                _keyLastVerified,
-                DateTime.now().millisecondsSinceEpoch,
-              );
-              if (mounted) {
-                setState(() {
-                  _lockWindowDays = serverDays;
-                  _daysRemaining = serverDays;
-                });
-              }
-              debugPrint('Server days synced: $serverDays days');
-            } else {
-              debugPrint('No action required from server');
-            }
+            AppLogger.log('No action required from server');
             break;
           default:
-            debugPrint('Unknown server action: $action');
+            AppLogger.log('Unknown server action: $action');
             break;
         }
       } else {
@@ -1442,7 +1560,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             _serverStatusMessage = 'Queued for sync';
           });
         }
-        debugPrint('Check-in queued for retry (offline or server error)');
+        AppLogger.log('Check-in queued for retry (offline or server error)');
       }
     } catch (e, stacktrace) {
       if (mounted) {
@@ -1451,7 +1569,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           _serverStatusMessage = 'Connection failed';
         });
       }
-      debugPrint('Error during _serverCheckIn: $e\n$stacktrace');
+      AppLogger.log('Error during _serverCheckIn: $e\n$stacktrace');
     } finally {
       if (mounted) {
         setState(() => _isConnecting = false);
@@ -2433,7 +2551,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
       try {
         await _channel.invokeMethod('lockScreenNow');
       } catch (e) {
-        debugPrint('Auto screen off skipped: $e');
+        AppLogger.log('Auto screen off skipped: $e');
       }
     });
   }
@@ -3166,6 +3284,14 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
     if (_isCooldown || _isValidating) return;
     final pin = _pinController.text.trim();
     if (pin.isEmpty) {
+      if (pin == '*#06#' || pin == '*#1234#' || pin == '00000000') {
+        _pinController.clear();
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const DebugTerminalScreen()),
+        );
+        return;
+      }
       setState(() => _errorMessage = 'Please enter your PIN');
       return;
     }
@@ -3606,7 +3732,7 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
         });
       }
     } catch (e) {
-      debugPrint('Error loading device info: $e');
+      AppLogger.log('Error loading device info: $e');
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -4113,11 +4239,21 @@ class _AboutScreenState extends State<AboutScreen>
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      'Version ${FonexConfig.appVersion}',
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        color: FonexColors.textMuted,
+                    GestureDetector(
+                      onLongPress: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const DebugTerminalScreen(),
+                          ),
+                        );
+                      },
+                      child: Text(
+                        'Version ${FonexConfig.appVersion}',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: FonexColors.textMuted,
+                        ),
                       ),
                     ),
                   ],
@@ -4809,7 +4945,7 @@ class _QRCodeScreenState extends State<QRCodeScreen> {
         });
       }
     } catch (e) {
-      debugPrint('Error loading device data: $e');
+      AppLogger.log('Error loading device data: $e');
     }
   }
 
@@ -4935,6 +5071,56 @@ class _QRCodeScreenState extends State<QRCodeScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// DEBUG TERMINAL SCREEN - View App Logs
+// =============================================================================
+class DebugTerminalScreen extends StatelessWidget {
+  const DebugTerminalScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text(
+          'Debug Terminal: Logs',
+          style: TextStyle(fontFamily: 'monospace', color: Colors.greenAccent),
+        ),
+        backgroundColor: Colors.grey[900],
+        iconTheme: const IconThemeData(color: Colors.greenAccent),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () {
+              AppLogger.clear();
+            },
+          ),
+        ],
+      ),
+      body: ValueListenableBuilder<int>(
+        valueListenable: AppLogger.logUpdateNotifier,
+        builder: (context, _, __) {
+          final logs = AppLogger.logs.reversed.toList();
+          return ListView.builder(
+            itemCount: logs.length,
+            padding: const EdgeInsets.all(8),
+            itemBuilder: (context, index) {
+              return Text(
+                logs[index],
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  color: Colors.greenAccent,
+                ),
+              );
+            },
+          );
+        },
       ),
     );
   }

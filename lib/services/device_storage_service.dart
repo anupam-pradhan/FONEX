@@ -41,7 +41,10 @@ class DeviceStorageService {
       prefs.setString(_keyDeviceHash, deviceHash),
       prefs.setString(_keyImei, imei),
       prefs.setString(_keyDeviceMetadata, jsonEncode(metadata)),
-      prefs.setInt(_keyRegistrationTimestamp, DateTime.now().millisecondsSinceEpoch),
+      prefs.setInt(
+        _keyRegistrationTimestamp,
+        DateTime.now().millisecondsSinceEpoch,
+      ),
       prefs.setBool(_keyIsFirstRegistration, true),
     ]);
   }
@@ -89,7 +92,10 @@ class DeviceStorageService {
   /// Update last sync timestamp
   static Future<void> updateLastSyncTimestamp() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_keyLastSyncTimestamp, DateTime.now().millisecondsSinceEpoch);
+    await prefs.setInt(
+      _keyLastSyncTimestamp,
+      DateTime.now().millisecondsSinceEpoch,
+    );
   }
 
   /// Get last sync timestamp
@@ -122,7 +128,16 @@ class DeviceStorageService {
       await prefs.setString(_keySyncQueue, jsonEncode(queue));
     } catch (e) {
       // If queue is corrupted, reset it
-      await prefs.setString(_keySyncQueue, jsonEncode([syncData]));
+      await prefs.setString(
+        _keySyncQueue,
+        jsonEncode([
+          {
+            ...syncData,
+            'timestamp': DateTime.now().toIso8601String(),
+            'retry_count': 0,
+          },
+        ]),
+      );
     }
   }
 
@@ -196,10 +211,12 @@ class DeviceStorageService {
       }
       await prefs.setString(_keyFailedSyncs, jsonEncode(failed));
     } catch (e) {
-      await prefs.setString(_keyFailedSyncs, jsonEncode([{
-        'reason': reason,
-        'timestamp': DateTime.now().toIso8601String(),
-      }]));
+      await prefs.setString(
+        _keyFailedSyncs,
+        jsonEncode([
+          {'reason': reason, 'timestamp': DateTime.now().toIso8601String()},
+        ]),
+      );
     }
   }
 
