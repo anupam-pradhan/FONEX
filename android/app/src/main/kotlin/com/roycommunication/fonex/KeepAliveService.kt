@@ -86,7 +86,7 @@ class KeepAliveService : Service() {
             val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
             val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
             manager.enforceFactoryResetBlock()
-            manager.enforceHomeLauncher(unpaidMode = !isPaidInFull)
+            manager.enforceHomeLauncherForCurrentState()
             Log.i(TAG, "Policies re-enforced from keep-alive service. paidInFull=$isPaidInFull")
         } catch (e: Exception) {
             Log.w(TAG, "Policy re-enforcement failed: ${e.message}")

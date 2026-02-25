@@ -36,14 +36,14 @@ class FonexWarningWidgetProvider : AppWidgetProvider() {
 
             if (isPaidInFull) {
                 views.setTextViewText(R.id.emi_status_title, "PAYMENT CLEAR")
-                views.setTextViewText(R.id.emi_status_subtitle, "This device has no pending EMI.")
+                views.setTextViewText(R.id.emi_status_subtitle, "This device has no pending due.")
                 views.setTextViewText(R.id.emi_status_subtitle_bn, "এই ডিভাইসে কোনো বাকি কিস্তি নেই।")
                 views.setTextViewText(R.id.emi_status_phone, "Fonex")
             } else {
-                views.setTextViewText(R.id.emi_status_title, "EMI PAYMENT PENDING")
+                views.setTextViewText(R.id.emi_status_title, "DUE PAYMENT PENDING")
                 views.setTextViewText(
                     R.id.emi_status_subtitle,
-                    "This device has pending payment."
+                    "This device has pending due payment."
                 )
                 views.setTextViewText(
                     R.id.emi_status_subtitle_bn,

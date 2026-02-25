@@ -47,11 +47,11 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
             Log.w(TAG, "Admin disable requested — device is LOCKED, blocking.")
             Toast.makeText(
                 context,
-                "⚠️ Cannot remove FONEX admin — Please complete your EMI payment first and contact Roy Communication.",
+                "⚠️ Cannot remove FONEX admin — Please clear your due payment first and contact Roy Communication.",
                 Toast.LENGTH_LONG
             ).show()
             // This message will be shown in the Android confirmation dialog
-            "⚠️ Device payment is pending. You cannot remove FONEX Device Admin until your EMI payment is completed. " +
+            "⚠️ Device payment is pending. You cannot remove FONEX Device Admin until your due payment is completed. " +
             "Please visit Roy Communication to unlock this device."
         } else {
             Log.i(TAG, "Admin disable requested — device is unlocked, allowing.")
@@ -64,10 +64,8 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
         Log.i(TAG, "Profile provisioning complete")
         try {
             val manager = DeviceLockManager(context.applicationContext)
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
             manager.enforceFactoryResetBlock()
-            manager.enforceHomeLauncher(unpaidMode = !isPaidInFull)
+            manager.enforceHomeLauncherForCurrentState()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to apply post-provisioning policies: ${e.message}", e)
         }

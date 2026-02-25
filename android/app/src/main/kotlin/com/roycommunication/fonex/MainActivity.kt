@@ -78,7 +78,7 @@ class MainActivity : FlutterActivity() {
         // Ensure reset/uninstall protection persists across app restarts.
         if (deviceLockManager.isDeviceOwner()) {
             deviceLockManager.enforceFactoryResetBlock()
-            deviceLockManager.enforceHomeLauncher(unpaidMode = !paidInFull)
+            deviceLockManager.enforceHomeLauncherForCurrentState()
 
             // If device was locked before (e.g., after reboot), re-engage lock task
             if (deviceLockManager.isDeviceLocked()) {
@@ -104,7 +104,7 @@ class MainActivity : FlutterActivity() {
         if (deviceLockManager.isDeviceOwner()) {
             // Re-apply unpaid protections and account-login allowance on every resume.
             deviceLockManager.enforceFactoryResetBlock()
-            deviceLockManager.enforceHomeLauncher(unpaidMode = !isPaidInFull())
+            deviceLockManager.enforceHomeLauncherForCurrentState()
         }
         if (isPaidInFull()) {
             restoreOriginalSystemWallpaper()
@@ -264,7 +264,7 @@ class MainActivity : FlutterActivity() {
                 "showResetBlockedMessage" -> {
                     android.widget.Toast.makeText(
                         this,
-                        "⛔ Cannot reset this device — Please complete your EMI payment first. " +
+                        "⛔ Cannot reset this device — Please clear your due payment first. " +
                         "Contact $SUPPORT_STORE_NAME: $SUPPORT_PHONE_1, $SUPPORT_PHONE_2",
                         android.widget.Toast.LENGTH_LONG
                     ).show()
@@ -285,7 +285,7 @@ class MainActivity : FlutterActivity() {
                     val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
                     prefs.edit().putBoolean("is_paid_in_full", paid).apply()
                     if (deviceLockManager.isDeviceOwner()) {
-                        deviceLockManager.enforceHomeLauncher(unpaidMode = !paid)
+                        deviceLockManager.enforceHomeLauncherForCurrentState()
                     }
                     if (paid) {
                         // Remove lock mode and restrictions once payment is fully completed.
@@ -508,7 +508,7 @@ class MainActivity : FlutterActivity() {
         try {
             FonexWarningWidgetProvider.updateAll(applicationContext)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to refresh EMI widget: ${e.message}")
+            Log.w(TAG, "Failed to refresh due widget: ${e.message}")
         }
     }
 
@@ -530,7 +530,7 @@ class MainActivity : FlutterActivity() {
                 prefs.edit().putBoolean(KEY_WIDGET_PIN_REQUESTED, true).apply()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to request EMI widget pin: ${e.message}")
+            Log.w(TAG, "Failed to request due widget pin: ${e.message}")
         }
     }
 
@@ -604,9 +604,9 @@ class MainActivity : FlutterActivity() {
 
         val brandText = "FONEX"
         val titleText = "THIS DEVICE AMOUNT IS PENDING"
-        val enLine1 = "Please pay EMI to continue normal use."
+        val enLine1 = "Please clear due amount to continue normal use."
         val bnLine1 = "এই ডিভাইসের কিস্তির টাকা বাকি আছে।"
-        val bnLine2 = "স্বাভাবিকভাবে ব্যবহার করতে EMI দ্রুত পরিশোধ করুন।"
+        val bnLine2 = "স্বাভাবিকভাবে ব্যবহার করতে বকেয়া দ্রুত পরিশোধ করুন।"
         val phoneLine1 = "Support: $SUPPORT_PHONE_1"
         val phoneLine2 = "Support: $SUPPORT_PHONE_2"
         val poweredBy = "Powered by $SUPPORT_STORE_NAME"

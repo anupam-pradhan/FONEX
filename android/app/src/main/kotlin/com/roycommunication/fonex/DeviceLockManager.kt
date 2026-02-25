@@ -127,6 +127,7 @@ class DeviceLockManager(private val context: Context) {
 
             // Persist locked state
             setDeviceLockedFlag(true)
+            enforceHomeLauncherForCurrentState()
 
             Log.i(TAG, "Device lock ENABLED successfully")
             return true
@@ -186,6 +187,7 @@ class DeviceLockManager(private val context: Context) {
 
             // Update persisted state
             setDeviceLockedFlag(false)
+            enforceHomeLauncherForCurrentState()
 
             Log.i(TAG, "Device lock DISABLED successfully")
             return true
@@ -424,6 +426,16 @@ class DeviceLockManager(private val context: Context) {
             Log.e(TAG, "Failed to enforce HOME launcher policy: ${e.message}", e)
             false
         }
+    }
+
+    /**
+     * Enforce HOME launcher only while unpaid AND actively locked.
+     * This keeps normal Android home behavior in unpaid-but-unlocked mode.
+     */
+    fun enforceHomeLauncherForCurrentState(): Boolean {
+        val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
+        val isLocked = isDeviceLocked()
+        return enforceHomeLauncher(unpaidMode = !isPaidInFull && isLocked)
     }
 
     /**

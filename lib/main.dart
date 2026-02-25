@@ -446,7 +446,7 @@ class FonexLogo extends StatelessWidget {
 }
 
 // =============================================================================
-// WALLPAPER WITH STORE NAME AND EMI INFO
+// WALLPAPER WITH STORE NAME AND DUE INFO
 // =============================================================================
 class StoreWallpaper extends StatelessWidget {
   final String storeName;
@@ -472,8 +472,8 @@ class StoreWallpaper extends StatelessWidget {
         ? FonexColors.orange
         : FonexColors.accent;
     final warningText = isLocked
-        ? 'DEVICE LOCKED • EMI AMOUNT PENDING'
-        : 'EMI AMOUNT PENDING • PAY BEFORE DUE DATE';
+        ? 'DEVICE LOCKED • DUE AMOUNT PENDING'
+        : 'DUE AMOUNT PENDING • PAY BEFORE DUE DATE';
 
     return Container(
       decoration: BoxDecoration(
@@ -533,7 +533,7 @@ class StoreWallpaper extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'EMI Payment System',
+                          'Due Payment Notice',
                           style: GoogleFonts.inter(
                             fontSize: 11,
                             color: FonexColors.textSecondary,
@@ -1035,9 +1035,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
     try {
       await _channel.invokeMethod('setPaidInFull', {'paid': false});
-      debugPrint('EMI running mode applied: launcher warning wallpaper enforced');
+      debugPrint('Due mode applied: launcher warning wallpaper enforced');
     } on PlatformException catch (e) {
-      debugPrint('Error applying EMI running mode: $e');
+      debugPrint('Error applying due mode: $e');
     }
 
     if (refreshOwnerState) {
@@ -1099,6 +1099,11 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     bool executed = false;
     switch (command.command) {
       case 'LOCK':
+        if (_isPaidInFull) {
+          debugPrint('Ignoring realtime LOCK: device is paid in full.');
+          executed = true;
+          break;
+        }
         if (!_isDeviceLocked) {
           executed = await lockDeviceLocally();
           if (!executed) {
@@ -1187,7 +1192,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
           true;
       if (!isIgnoringBatteryOptimizations) {
-        unawaited(_channel.invokeMethod('requestIgnoreBatteryOptimizations'));
+        debugPrint(
+          'Battery optimization is enabled. User can disable it manually from Settings screen.',
+        );
       }
       await prefs.setBool(_keyBackgroundPromptShown, true);
     } catch (e) {
@@ -1297,6 +1304,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             response['is_paid_in_full'] == true ||
             response['paid_in_full'] == true ||
             (response['payment_status']?.toString().toLowerCase() == 'paid');
+        final serverLocked =
+            response['is_locked'] == true ||
+            response['locked'] == true ||
+            (response['status']?.toString().toLowerCase() == 'locked');
         final serverDays =
             _parseServerDays(response['days']) ??
             _parseServerDays(response['days_remaining']) ??
@@ -1305,6 +1316,16 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           await _activatePaidInFullMode(refreshOwnerState: true);
         } else if (!serverPaidInFull) {
           await _activateEmiRunningMode(days: serverDays);
+          if (serverLocked && !_isDeviceLocked) {
+            final locked = await _engageDeviceLock();
+            if (locked && mounted) {
+              setState(() {
+                _isDeviceLocked = true;
+                _daysRemaining = 0;
+              });
+            }
+            debugPrint('Server state lock sync applied: $locked');
+          }
         }
 
         final rawAction = response['action'] as String? ?? 'none';
@@ -1468,6 +1489,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             )
           : NormalModeScreen(
               isDeviceOwner: _isDeviceOwner,
+              isPaidInFull: _isPaidInFull,
               daysRemaining: _daysRemaining,
               lockWindowDays: _lockWindowDays,
               onSimulateExpiry: _devSimulateExpiry,
@@ -1752,6 +1774,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 // =============================================================================
 class NormalModeScreen extends StatefulWidget {
   final bool isDeviceOwner;
+  final bool isPaidInFull;
   final int daysRemaining;
   final int lockWindowDays;
   final VoidCallback onSimulateExpiry;
@@ -1764,6 +1787,7 @@ class NormalModeScreen extends StatefulWidget {
   const NormalModeScreen({
     super.key,
     required this.isDeviceOwner,
+    required this.isPaidInFull,
     required this.daysRemaining,
     required this.lockWindowDays,
     required this.onSimulateExpiry,
@@ -2088,7 +2112,7 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
               Icon(Icons.receipt_long_rounded, size: 18, color: urgentColor),
               const SizedBox(width: 8),
               Text(
-                'Full EMI Information',
+                'Full Due Information',
                 style: GoogleFonts.inter(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
@@ -2125,7 +2149,7 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
               border: Border.all(color: FonexColors.orange.withValues(alpha: 0.4)),
             ),
             child: Text(
-              'Please pay EMI before due date to avoid device lock.',
+              'Please clear the due amount before the due date to avoid device lock.',
               style: GoogleFonts.inter(
                 fontSize: 12,
                 color: FonexColors.textPrimary,
@@ -2236,6 +2260,8 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                                 builder: (_) => PaymentScheduleScreen(
                                   daysRemaining: widget.daysRemaining,
                                   lockWindowDays: widget.lockWindowDays,
+                                  isPaidInFull: widget.isPaidInFull,
+                                  lastServerSync: widget.lastServerSync,
                                 ),
                               ),
                             ),
@@ -2270,7 +2296,7 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                                 ? FonexColors.green
                                 : FonexColors.orange,
                             label: widget.isDeviceOwner
-                                ? 'EMI\nActive'
+                                ? 'Due\nActive'
                                 : 'Setup\nRequired',
                           ),
                         ),
@@ -2578,7 +2604,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
             Row(
               children: [
                 Text(
-                  'Scan to Pay EMI',
+                  'Scan to Pay Due',
                   style: GoogleFonts.inter(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
@@ -2992,7 +3018,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                                         const SizedBox(width: 8),
                                         Flexible(
                                           child: Text(
-                                            'Visit ${widget.storeName} store to complete EMI payment and unlock device',
+                                            'Visit ${widget.storeName} store to clear due payment and unlock device',
                                             textAlign: TextAlign.center,
                                             style: GoogleFonts.inter(
                                               fontSize: 11,
@@ -3014,7 +3040,7 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                                         size: 18,
                                       ),
                                       label: Text(
-                                        'Pay EMI (Show QR)',
+                                        'Pay Due (Show QR)',
                                         style: GoogleFonts.inter(
                                           fontSize: 13,
                                           fontWeight: FontWeight.w700,
@@ -4274,7 +4300,7 @@ class AboutScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'If you need help with your device or have questions about your EMI payment, please contact ${_storeName} using the phone numbers above.',
+                      'If you need help with your device or have questions about your due payment, please contact ${_storeName} using the phone numbers above.',
                       style: GoogleFonts.inter(
                         fontSize: 13,
                         color: FonexColors.textSecondary,
@@ -4616,16 +4642,20 @@ class AboutScreen extends StatelessWidget {
 }
 
 // =============================================================================
-// PAYMENT SCHEDULE SCREEN — EMI payment schedule and history
+// PAYMENT SCHEDULE SCREEN — Due payment schedule and history
 // =============================================================================
 class PaymentScheduleScreen extends StatelessWidget {
   final int daysRemaining;
   final int lockWindowDays;
+  final bool isPaidInFull;
+  final DateTime? lastServerSync;
 
   const PaymentScheduleScreen({
     super.key,
     required this.daysRemaining,
     required this.lockWindowDays,
+    required this.isPaidInFull,
+    this.lastServerSync,
   });
 
   @override
@@ -4712,8 +4742,43 @@ class PaymentScheduleScreen extends StatelessWidget {
                     const Divider(color: FonexColors.cardBorder),
                     _buildInfoRow(
                       'Status',
-                      daysRemaining > 0 ? 'Active' : 'Locked',
-                      daysRemaining > 0 ? FonexColors.green : FonexColors.red,
+                      isPaidInFull
+                          ? 'Paid in Full'
+                          : (daysRemaining > 0 ? 'Due Active' : 'Locked'),
+                      isPaidInFull
+                          ? FonexColors.green
+                          : (daysRemaining > 0
+                                ? FonexColors.green
+                                : FonexColors.red),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Payment History',
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: FonexColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              GlassCard(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    _buildInfoRow(
+                      'Latest Status',
+                      isPaidInFull ? 'Paid in Full' : 'Amount Due',
+                      isPaidInFull ? FonexColors.green : FonexColors.orange,
+                    ),
+                    const Divider(color: FonexColors.cardBorder),
+                    _buildInfoRow(
+                      'Last Server Sync',
+                      lastServerSync != null
+                          ? _formatDate(lastServerSync!)
+                          : 'Not synced yet',
                     ),
                   ],
                 ),
@@ -4731,7 +4796,7 @@ class PaymentScheduleScreen extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        'Please visit ${_storeName} to make your EMI payment before the due date to avoid device lock.',
+                        'Please visit ${_storeName} to clear your due amount before the due date to avoid device lock.',
                         style: GoogleFonts.inter(
                           fontSize: 13,
                           color: FonexColors.textPrimary,

@@ -34,7 +34,7 @@
             android:maxLines="1"
             android:scrollHorizontally="true"
             android:singleLine="true"
-            android:text="EMI PAYMENT PENDING"
+            android:text="DUE PAYMENT PENDING"
             android:textColor="#1B2D4A"
             android:textSize="12sp"
             android:textStyle="bold" />
@@ -52,7 +52,7 @@
             android:maxLines="1"
             android:scrollHorizontally="true"
             android:singleLine="true"
-            android:text="This device has pending payment."
+            android:text="This device has pending due payment."
             android:textColor="#314B72"
             android:textSize="10.5sp" />
 

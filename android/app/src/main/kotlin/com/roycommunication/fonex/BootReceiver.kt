@@ -29,8 +29,7 @@ class BootReceiver : BroadcastReceiver() {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val manager = DeviceLockManager(context)
             manager.enforceFactoryResetBlock()
-            val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
-            manager.enforceHomeLauncher(unpaidMode = !isPaidInFull)
+            manager.enforceHomeLauncherForCurrentState()
             FonexWarningWidgetProvider.updateAll(context)
 
             val isLocked = prefs.getBoolean(KEY_DEVICE_LOCKED, false)

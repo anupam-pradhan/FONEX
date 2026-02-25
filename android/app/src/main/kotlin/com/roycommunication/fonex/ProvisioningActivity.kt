@@ -42,11 +42,9 @@ class ProvisioningActivity : Activity() {
     private fun handleAdminPolicyCompliance() {
         try {
             val manager = DeviceLockManager(applicationContext)
-            val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", MODE_PRIVATE)
-            val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
 
             manager.enforceFactoryResetBlock()
-            manager.enforceHomeLauncher(unpaidMode = !isPaidInFull)
+            manager.enforceHomeLauncherForCurrentState()
 
             Log.i(TAG, "Admin policy compliance completed")
         } catch (e: Exception) {
