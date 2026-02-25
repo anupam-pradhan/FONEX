@@ -53,7 +53,8 @@ class PreciseTimingService {
 
     final anchor = DateTime.fromMillisecondsSinceEpoch(anchorMs);
     final now = DateTime.now().toUtc();
-    final elapsedMs = now.millisecondsSinceEpoch - anchor.millisecondsSinceEpoch;
+    final elapsedMs =
+        now.millisecondsSinceEpoch - anchor.millisecondsSinceEpoch;
     const msPerDay = 24 * 60 * 60 * 1000;
 
     final elapsedDays = (elapsedMs / msPerDay).floor();
@@ -88,7 +89,9 @@ class PreciseTimingService {
     final newWindow = currentWindow + additionalDays;
 
     await prefs.setInt(_keyWindowDays, newWindow);
-    AppLogger.log('EMI window extended: +$additionalDays days (total: $newWindow)');
+    AppLogger.log(
+      'EMI window extended: +$additionalDays days (total: $newWindow)',
+    );
   }
 
   /// Reset timer (used when payment is made but device still in EMI)
@@ -112,7 +115,9 @@ class PreciseTimingService {
       _keyLockTimestamp,
       DateTime.now().millisecondsSinceEpoch,
     );
-    AppLogger.log('Device marked as locked at ${DateTime.now().toIso8601String()}');
+    AppLogger.log(
+      'Device marked as locked at ${DateTime.now().toIso8601String()}',
+    );
   }
 
   /// Get when device was locked

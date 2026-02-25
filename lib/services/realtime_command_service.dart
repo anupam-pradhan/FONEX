@@ -253,8 +253,9 @@ class RealtimeCommandService {
 
   void _listenConnectivityChanges() {
     _connectivitySubscription?.cancel();
-    _connectivitySubscription =
-        Connectivity().onConnectivityChanged.listen((dynamic result) {
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+      dynamic result,
+    ) {
       if (_isOnlineResult(result)) {
         _scheduleReconnect(const Duration(milliseconds: 500));
       }
@@ -372,7 +373,9 @@ class RealtimeCommandService {
       await Future.delayed(Duration(seconds: delaySeconds));
     }
 
-    AppLogger.log('ACK failed for command $commandId after $maxAttempts attempts');
+    AppLogger.log(
+      'ACK failed for command $commandId after $maxAttempts attempts',
+    );
   }
 
   String _normalize(dynamic value) => value?.toString().trim() ?? '';

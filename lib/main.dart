@@ -15,6 +15,7 @@ import 'services/device_storage_service.dart';
 import 'services/realtime_command_service.dart';
 import 'services/sync_service.dart';
 import 'services/device_state_manager.dart';
+import 'services/supabase_command_listener.dart';
 // =============================================================================
 // FONEX Powered by Roy Communication — Device Control System
 // =============================================================================
@@ -741,13 +742,21 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     WidgetsBinding.instance.addObserver(this);
     DeviceStateManager().initialize();
     SyncService().initialize();
+    SupabaseCommandListener().initialize();
     unawaited(_initialize());
-    
+
+    // Start listening for Supabase commands (uses device ID from _realtimeDeviceId)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_realtimeDeviceId != null) {
+        SupabaseCommandListener().startListening(_realtimeDeviceId!);
+      }
+    });
+
     // Poll SIM state every 60 seconds while app is active (optimized: only when needed)
     _simCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted && !_isPaidInFull) _checkSimState();
     });
-    
+
     // Frequent fallback heartbeat; effective interval remains larger while realtime is healthy.
     _serverCheckInTimer = Timer.periodic(
       const Duration(seconds: _fallbackServerCheckSeconds),
@@ -779,6 +788,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     _serverCheckInTimer?.cancel();
     SyncService().dispose();
     unawaited(RealtimeCommandService().dispose());
+    unawaited(SupabaseCommandListener().stopListening());
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -870,7 +880,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     if (isPaidInFull) {
       await _activatePaidInFullMode(refreshOwnerState: true);
     } else {
-      await _activateEmiRunningMode(days: storedWindow);
+      await _activateDueAmountMode(days: storedWindow);
     }
     unawaited(_ensureBackgroundKillProtection(allowUserPrompt: true));
     _deviceHash = await DeviceHashUtil.getDeviceHash();
@@ -1076,7 +1086,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     if (_isPaidInFull) return false;
     try {
       final success = await DeviceStateManager().engageLock(
-        reason: 'EMI payment not received',
+        reason: 'Due amount not paid',
       );
       if (success && mounted) {
         setState(() {
@@ -1111,7 +1121,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
   }
 
-  Future<void> _activateEmiRunningMode({
+  Future<void> _activateDueAmountMode({
     int? days,
     bool refreshOwnerState = false,
     bool forceResetAnchor = false,
@@ -1131,10 +1141,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             _daysRemaining = windowDays;
           }
         });
-        AppLogger.log('EMI pending mode activated: window=$windowDays days');
+        AppLogger.log('Due amount mode activated: window=$windowDays days');
       }
     } catch (e) {
-      AppLogger.log('Error activating EMI mode: $e');
+      AppLogger.log('Error activating due amount mode: $e');
     }
 
     if (refreshOwnerState) {
@@ -1412,7 +1422,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         if (serverPaidInFull && !_isPaidInFull) {
           await _activatePaidInFullMode(refreshOwnerState: true);
         } else if (!serverPaidInFull) {
-          await _activateEmiRunningMode(days: serverDays);
+          await _activateDueAmountMode(days: serverDays);
           if (serverRemainingDays != null) {
             await _syncServerRemainingDays(serverRemainingDays);
           }
@@ -1467,7 +1477,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
                 _parseServerDays(response['days_remaining']) ??
                 _parseServerDays(response['tenure']) ??
                 _lockAfterDays;
-            await _activateEmiRunningMode(days: days, forceResetAnchor: true);
+            await _activateDueAmountMode(days: days, forceResetAnchor: true);
             AppLogger.log('Device extended by server: $days days');
             break;
           case 'paid_in_full':

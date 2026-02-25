@@ -105,7 +105,9 @@ class DeviceStateManager {
           .invokeMethod<bool>('startDeviceLock')
           .timeout(const Duration(seconds: 10));
       if (started != true) {
-        AppLogger.log('Native lock failed: Device Owner not set or policy denied');
+        AppLogger.log(
+          'Native lock failed: Device Owner not set or policy denied',
+        );
         return false;
       }
 
@@ -154,10 +156,7 @@ class DeviceStateManager {
       if (resetTimerAnchor) {
         // Reset EMI timer anchor to NOW for fresh window
         final anchor = newTimerAnchor ?? DateTime.now();
-        await prefs.setInt(
-          'timer_anchor_ms',
-          anchor.millisecondsSinceEpoch,
-        );
+        await prefs.setInt('timer_anchor_ms', anchor.millisecondsSinceEpoch);
       }
 
       await prefs.setInt(
