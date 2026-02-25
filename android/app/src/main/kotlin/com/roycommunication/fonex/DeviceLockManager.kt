@@ -461,7 +461,6 @@ class DeviceLockManager(private val context: Context) {
         val accountRestrictions = listOf(
             UserManager.DISALLOW_MODIFY_ACCOUNTS,
             UserManager.DISALLOW_CONFIG_CREDENTIALS,
-            UserManager.DISALLOW_ADD_MANAGED_PROFILE,
             UserManager.DISALLOW_REMOVE_MANAGED_PROFILE
         )
         accountRestrictions.forEach { restriction ->
@@ -470,6 +469,13 @@ class DeviceLockManager(private val context: Context) {
             } catch (e: Exception) {
                 Log.w(TAG, "Could not clear restriction '$restriction': ${e.message}")
             }
+        }
+        try {
+            // Keep normal Google sign-in available, but block creation of managed/work profile
+            // which can force a workspace-only account path on some OEM builds.
+            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_ADD_MANAGED_PROFILE)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not enforce managed-profile block: ${e.message}")
         }
 
         val accountTypes = mutableSetOf(

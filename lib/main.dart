@@ -30,6 +30,7 @@ const String _keyLastVerified = FonexConfig.keyLastVerified;
 const String _keyDeviceLocked = FonexConfig.keyDeviceLocked;
 const String _keySimAbsentSince = FonexConfig.keySimAbsentSince;
 const String _keyLockWindowDays = 'lock_window_days';
+const String _keyBackgroundPromptShown = 'background_prompt_shown';
 const String _serverBaseUrl = FonexConfig.serverBaseUrl;
 const String _supportPhone1 = FonexConfig.supportPhone1;
 const String _supportPhone2 = FonexConfig.supportPhone2;
@@ -783,12 +784,13 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             debugPrint(
               'SIM absent >$_simAbsentLockDays days — locking device.',
             );
-            await _engageDeviceLock();
-            if (mounted)
+            final locked = await _engageDeviceLock();
+            if (locked && mounted) {
               setState(() {
                 _isDeviceLocked = true;
                 _daysRemaining = 0;
               });
+            }
           }
         }
       } else {
@@ -925,12 +927,13 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
     // If explicitly marked locked in prefs, re-engage lock
     if (wasLocked) {
-      await _engageDeviceLock();
-      if (mounted)
+      final locked = await _engageDeviceLock();
+      if (locked && mounted) {
         setState(() {
           _isDeviceLocked = true;
           _daysRemaining = 0;
         });
+      }
       return;
     }
 
@@ -940,12 +943,13 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     final remaining = lockWindowDays - daysSince;
 
     if (daysSince >= lockWindowDays) {
-      await _engageDeviceLock();
-      if (mounted)
+      final locked = await _engageDeviceLock();
+      if (locked && mounted) {
         setState(() {
           _isDeviceLocked = true;
           _daysRemaining = 0;
         });
+      }
     } else {
       if (mounted) {
         setState(() {
@@ -956,14 +960,21 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
   }
 
-  Future<void> _engageDeviceLock() async {
-    if (!_isDeviceOwner || _isPaidInFull) return;
+  Future<bool> _engageDeviceLock() async {
+    if (_isPaidInFull) return false;
     try {
-      await _channel.invokeMethod('startDeviceLock');
+      final started = await _channel.invokeMethod<bool>('startDeviceLock');
+      if (started != true) {
+        await _checkDeviceOwner();
+        debugPrint('Device lock request rejected (device owner missing or policy denied).');
+        return false;
+      }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_keyDeviceLocked, true);
+      return true;
     } on PlatformException catch (e) {
       debugPrint('Error engaging device lock: $e');
+      return false;
     }
   }
 
@@ -1035,9 +1046,13 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   }
 
   /// FIX: Properly clear locked flag AND reset timer so device doesn't re-lock immediately.
-  Future<void> _disengageDeviceLock() async {
+  Future<bool> _disengageDeviceLock() async {
     try {
-      await _channel.invokeMethod('stopDeviceLock');
+      final stopped = await _channel.invokeMethod<bool>('stopDeviceLock');
+      if (stopped != true) {
+        debugPrint('Device unlock request rejected by native layer.');
+        return false;
+      }
       final prefs = await SharedPreferences.getInstance();
       // Clear locked flag
       await prefs.setBool(_keyDeviceLocked, false);
@@ -1054,8 +1069,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           _daysRemaining = _lockWindowDays;
         });
       }
+      return true;
     } on PlatformException catch (e) {
       debugPrint('Error disengaging device lock: $e');
+      return false;
     }
   }
 
@@ -1074,19 +1091,19 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     );
   }
 
-  Future<void> lockDeviceLocally() => _engageDeviceLock();
+  Future<bool> lockDeviceLocally() => _engageDeviceLock();
 
-  Future<void> unlockDeviceLocally() => _disengageDeviceLock();
+  Future<bool> unlockDeviceLocally() => _disengageDeviceLock();
 
   Future<void> _handleRealtimeCommand(DeviceRealtimeCommand command) async {
+    bool executed = false;
     switch (command.command) {
       case 'LOCK':
-        if (_isPaidInFull) {
-          debugPrint('Ignoring realtime LOCK: device is paid in full.');
-          break;
-        }
         if (!_isDeviceLocked) {
-          await lockDeviceLocally();
+          executed = await lockDeviceLocally();
+          if (!executed) {
+            throw Exception('Realtime LOCK execution failed');
+          }
           unawaited(_ensureConnectivityForLockedMode());
           if (mounted) {
             setState(() {
@@ -1094,22 +1111,31 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
               _daysRemaining = 0;
             });
           }
+        } else {
+          executed = true;
         }
         break;
       case 'UNLOCK':
         if (_isDeviceLocked) {
-          await unlockDeviceLocally();
+          executed = await unlockDeviceLocally();
+          if (!executed) {
+            throw Exception('Realtime UNLOCK execution failed');
+          }
+        } else {
+          executed = true;
         }
         break;
       default:
         return;
     }
 
-    sendCommandAck(
-      command.commandId,
-      command: command.command,
-      deviceId: _realtimeDeviceId ?? command.deviceId,
-    );
+    if (executed) {
+      sendCommandAck(
+        command.commandId,
+        command: command.command,
+        deviceId: _realtimeDeviceId ?? command.deviceId,
+      );
+    }
 
     // Push an immediate health/status sync so dashboard state updates quickly.
     unawaited(_serverCheckIn());
@@ -1154,6 +1180,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       await _channel.invokeMethod('scheduleKeepAliveWatchdog');
 
       if (!allowUserPrompt) return;
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_keyBackgroundPromptShown) == true) return;
 
       final isIgnoringBatteryOptimizations =
           await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
@@ -1161,7 +1189,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       if (!isIgnoringBatteryOptimizations) {
         unawaited(_channel.invokeMethod('requestIgnoreBatteryOptimizations'));
       }
-      unawaited(_channel.invokeMethod('openAutoStartSettings'));
+      await prefs.setBool(_keyBackgroundPromptShown, true);
     } catch (e) {
       debugPrint('Background protection setup skipped: $e');
     }
@@ -1284,13 +1312,41 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
         debugPrint('Server check-in response: action=$action');
 
-        // Heartbeat must not control lock/unlock. Those are realtime-only.
+        final realtimeHealthy = RealtimeCommandService().isSubscribed;
+        // Prefer realtime for lock/unlock, but fail over to heartbeat action
+        // when realtime is disconnected to avoid missed lock commands.
         switch (action) {
           case 'lock':
+            if (realtimeHealthy) {
+              debugPrint(
+                'Ignoring lock from heartbeat (realtime is active).',
+              );
+              break;
+            }
+            final locked = await _engageDeviceLock();
+            if (locked && mounted) {
+              setState(() {
+                _isDeviceLocked = true;
+                _daysRemaining = 0;
+              });
+            }
+            debugPrint('Fallback lock from heartbeat applied: $locked');
+            break;
           case 'unlock':
-            debugPrint(
-              'Ignoring $action from heartbeat (realtime handles it).',
-            );
+            if (realtimeHealthy) {
+              debugPrint(
+                'Ignoring unlock from heartbeat (realtime is active).',
+              );
+              break;
+            }
+            final unlocked = await _disengageDeviceLock();
+            if (unlocked && mounted) {
+              setState(() {
+                _isDeviceLocked = false;
+                _daysRemaining = _lockWindowDays;
+              });
+            }
+            debugPrint('Fallback unlock from heartbeat applied: $unlocked');
             break;
           case 'extend':
           case 'extend_days':

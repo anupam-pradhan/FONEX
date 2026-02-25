@@ -334,12 +334,16 @@ class RealtimeCommandService {
       'Content-Type': 'application/json',
       'x-device-secret': FonexConfig.deviceSecret,
     };
+    final executedAt = DateTime.now().toUtc().toIso8601String().replaceFirst(
+      RegExp(r'\.\d+Z$'),
+      'Z',
+    );
     final body = <String, dynamic>{
       'commandId': commandId,
       'device_id': resolvedDeviceId,
       'command': command,
       'status': 'executed',
-      'executed_at': DateTime.now().toIso8601String(),
+      'executed_at': executedAt,
     };
 
     const maxAttempts = 5;
