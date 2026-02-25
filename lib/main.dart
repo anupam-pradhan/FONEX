@@ -14,6 +14,7 @@ import 'services/app_logger.dart';
 import 'services/device_storage_service.dart';
 import 'services/realtime_command_service.dart';
 import 'services/sync_service.dart';
+import 'services/device_state_manager.dart';
 // =============================================================================
 // FONEX Powered by Roy Communication — Device Control System
 // =============================================================================
@@ -37,7 +38,6 @@ const String _serverBaseUrl = FonexConfig.serverBaseUrl;
 const String _supportPhone1 = FonexConfig.supportPhone1;
 const String _supportPhone2 = FonexConfig.supportPhone2;
 const String _storeName = FonexConfig.storeName;
-const String _storeAddress = FonexConfig.storeAddress;
 
 // =============================================================================
 // DEVICE HASH UTILITY — Offline Algorithmic PIN Generation
@@ -737,14 +737,17 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   @override
   void initState() {
     super.initState();
-    // Initialize sync service for enterprise-level sync
+    // Initialize all services
     WidgetsBinding.instance.addObserver(this);
+    DeviceStateManager().initialize();
     SyncService().initialize();
     unawaited(_initialize());
+    
     // Poll SIM state every 60 seconds while app is active (optimized: only when needed)
     _simCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted && !_isPaidInFull) _checkSimState();
     });
+    
     // Frequent fallback heartbeat; effective interval remains larger while realtime is healthy.
     _serverCheckInTimer = Timer.periodic(
       const Duration(seconds: _fallbackServerCheckSeconds),
@@ -1072,48 +1075,35 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   Future<bool> _engageDeviceLock() async {
     if (_isPaidInFull) return false;
     try {
-      final nativeLocked = await _readNativeDeviceLocked();
-      if (nativeLocked) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool(_keyDeviceLocked, true);
-        return true;
+      final success = await DeviceStateManager().engageLock(
+        reason: 'EMI payment not received',
+      );
+      if (success && mounted) {
+        setState(() {
+          _isDeviceLocked = true;
+          _daysRemaining = 0;
+        });
       }
-      final started = await _channel.invokeMethod<bool>('startDeviceLock');
-      if (started != true) {
-        await _checkDeviceOwner();
-        debugPrint(
-          'Device lock request rejected (device owner missing or policy denied).',
-        );
-        return false;
-      }
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_keyDeviceLocked, true);
-      return true;
-    } on PlatformException catch (e) {
+      return success;
+    } catch (e) {
       AppLogger.log('Error engaging device lock: $e');
       return false;
     }
   }
 
   Future<void> _activatePaidInFullMode({bool refreshOwnerState = false}) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('is_paid_in_full', true);
-    await prefs.setBool(_keyDeviceLocked, false);
-    await prefs.remove(_keySimAbsentSince);
-
-    if (mounted) {
-      setState(() {
-        _isPaidInFull = true;
-        _isDeviceLocked = false;
-        _daysRemaining = _lockWindowDays;
-      });
-    }
-
     try {
-      await _channel.invokeMethod('setPaidInFull', {'paid': true});
-      AppLogger.log('Paid in full mode applied: restrictions removed');
-    } on PlatformException catch (e) {
-      AppLogger.log('Error applying paid in full mode: $e');
+      final success = await DeviceStateManager().markPaidInFull();
+      if (success && mounted) {
+        setState(() {
+          _isPaidInFull = true;
+          _isDeviceLocked = false;
+          _daysRemaining = _lockWindowDays;
+        });
+        AppLogger.log('Paid in full mode activated successfully');
+      }
+    } catch (e) {
+      AppLogger.log('Error activating paid in full mode: $e');
     }
 
     if (refreshOwnerState) {
@@ -1126,54 +1116,25 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     bool refreshOwnerState = false,
     bool forceResetAnchor = false,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    final wasPaidInFull =
-        prefs.getBool('is_paid_in_full') == true || _isPaidInFull;
-    await prefs.setBool('is_paid_in_full', false);
-    var effectiveDays = _readLockWindowDays(prefs);
-
-    if (days != null) {
-      final normalizedDays = _normalizeLockWindowDays(days);
-      final previousWindowDays = _readLockWindowDays(prefs);
-      await prefs.setInt(_keyLockWindowDays, normalizedDays);
-      effectiveDays = normalizedDays;
-      final hasAnchor = prefs.getInt(_keyLastVerified) != null;
-      if (!_isDeviceLocked &&
-          (!hasAnchor ||
-              forceResetAnchor ||
-              wasPaidInFull ||
-              previousWindowDays != normalizedDays)) {
-        await prefs.setInt(
-          _keyLastVerified,
-          DateTime.now().millisecondsSinceEpoch,
-        );
-      }
-    } else if (prefs.getInt(_keyLastVerified) == null && !_isDeviceLocked) {
-      await prefs.setInt(
-        _keyLastVerified,
-        DateTime.now().millisecondsSinceEpoch,
-      );
-    }
-
-    final remainingDays = _calculateRemainingDays(prefs, effectiveDays);
-    if (mounted) {
-      setState(() {
-        _lockWindowDays = effectiveDays;
-        if (!_isDeviceLocked) _daysRemaining = remainingDays;
-      });
-    }
-
-    if (_isPaidInFull && mounted) {
-      setState(() => _isPaidInFull = false);
-    } else {
-      _isPaidInFull = false;
-    }
-
     try {
-      await _channel.invokeMethod('setPaidInFull', {'paid': false});
-      AppLogger.log('Due mode applied: launcher warning wallpaper enforced');
-    } on PlatformException catch (e) {
-      AppLogger.log('Error applying due mode: $e');
+      final windowDays = days ?? _lockWindowDays;
+      final success = await DeviceStateManager().markAsEmiPending(
+        windowDays: windowDays,
+        timerAnchor: forceResetAnchor ? DateTime.now() : null,
+      );
+
+      if (success && mounted) {
+        setState(() {
+          _isPaidInFull = false;
+          _lockWindowDays = windowDays;
+          if (!_isDeviceLocked) {
+            _daysRemaining = windowDays;
+          }
+        });
+        AppLogger.log('EMI pending mode activated: window=$windowDays days');
+      }
+    } catch (e) {
+      AppLogger.log('Error activating EMI mode: $e');
     }
 
     if (refreshOwnerState) {
@@ -1184,47 +1145,17 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   /// FIX: Properly clear locked flag AND reset timer so device doesn't re-lock immediately.
   Future<bool> _disengageDeviceLock() async {
     try {
-      final nativeLocked = await _readNativeDeviceLocked();
-      if (!nativeLocked) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool(_keyDeviceLocked, false);
-        await prefs.remove(_keySimAbsentSince);
-        await prefs.setInt(
-          _keyLastVerified,
-          DateTime.now().millisecondsSinceEpoch,
-        );
-        if (mounted) {
-          setState(() {
-            _isDeviceLocked = false;
-            _daysRemaining = _lockWindowDays;
-          });
-        }
-        return true;
-      }
-
-      final stopped = await _channel.invokeMethod<bool>('stopDeviceLock');
-      if (stopped != true) {
-        AppLogger.log('Device unlock request rejected by native layer.');
-        return false;
-      }
-      final prefs = await SharedPreferences.getInstance();
-      // Clear locked flag
-      await prefs.setBool(_keyDeviceLocked, false);
-      // Reset the verification timer to NOW — user gets a fresh 30-day window
-      await prefs.setInt(
-        _keyLastVerified,
-        DateTime.now().millisecondsSinceEpoch,
+      final success = await DeviceStateManager().disengageLock(
+        resetTimerAnchor: true,
       );
-      // Clear SIM absent timer too
-      await prefs.remove(_keySimAbsentSince);
-      if (mounted) {
+      if (success && mounted) {
         setState(() {
           _isDeviceLocked = false;
           _daysRemaining = _lockWindowDays;
         });
       }
-      return true;
-    } on PlatformException catch (e) {
+      return success;
+    } catch (e) {
       AppLogger.log('Error disengaging device lock: $e');
       return false;
     }
