@@ -49,7 +49,8 @@ class FonexConfig {
   static const String storeName = 'Roy Communication';
 
   /// Store address (optional, for display)
-  static const String storeAddress = 'Visit our store for EMI payment';
+  static const String storeAddress =
+      'Narayanpur, Namkhana,  West Bengal - 743347';
 
   /// Primary support phone number
   static const String supportPhone1 = '+918388855549';

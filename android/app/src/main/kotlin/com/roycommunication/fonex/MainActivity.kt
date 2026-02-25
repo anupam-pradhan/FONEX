@@ -606,17 +606,19 @@ class MainActivity : FlutterActivity() {
         val titleText = "THIS DEVICE AMOUNT IS PENDING"
         val enLine1 = "Please clear due amount to continue normal use."
         val bnLine1 = "এই ডিভাইসের কিস্তির টাকা বাকি আছে।"
-        val bnLine2 = "স্বাভাবিকভাবে ব্যবহার করতে বকেয়া দ্রুত পরিশোধ করুন।"
+        val bnLine2a = "স্বাভাবিকভাবে ব্যবহার করতে"
+        val bnLine2b = "বকেয়া দ্রুত পরিশোধ করুন।"
         val phoneLine1 = "Support: $SUPPORT_PHONE_1"
         val phoneLine2 = "Support: $SUPPORT_PHONE_2"
         val poweredBy = "Powered by $SUPPORT_STORE_NAME"
 
-        fitCenterText(titlePaint, titleText, 20f)
-        fitCenterText(enPaint, enLine1, 15f)
-        fitCenterText(bnPaint, bnLine1, 15f)
-        fitCenterText(bnPaint, bnLine2, 15f)
-        fitCenterText(phonePaint, phoneLine1, 14f)
-        fitCenterText(phonePaint, phoneLine2, 14f)
+        fitCenterText(titlePaint, titleText, 16f)
+        fitCenterText(enPaint, enLine1, 14f)
+        fitCenterText(bnPaint, bnLine1, 14f)
+        fitCenterText(bnPaint, bnLine2a, 14f)
+        fitCenterText(bnPaint, bnLine2b, 14f)
+        fitCenterText(phonePaint, phoneLine1, 12f)
+        fitCenterText(phonePaint, phoneLine2, 12f)
 
         var y = logoRect.bottom + (height * 0.065f).coerceIn(24f, 70f)
         canvas.drawText(brandText, centerX, y, brandPaint)
@@ -630,8 +632,11 @@ class MainActivity : FlutterActivity() {
         y += (height * 0.056f).coerceIn(24f, 62f)
         canvas.drawText(bnLine1, centerX, y, bnPaint)
 
-        y += (height * 0.053f).coerceIn(22f, 58f)
-        canvas.drawText(bnLine2, centerX, y, bnPaint)
+        y += (height * 0.045f).coerceIn(20f, 48f)
+        canvas.drawText(bnLine2a, centerX, y, bnPaint)
+
+        y += (height * 0.045f).coerceIn(20f, 48f)
+        canvas.drawText(bnLine2b, centerX, y, bnPaint)
 
         y += (height * 0.08f).coerceIn(34f, 88f)
         canvas.drawText(phoneLine1, centerX, y, phonePaint)
