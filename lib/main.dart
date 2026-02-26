@@ -1489,7 +1489,12 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         if (serverPaidInFull && !_isPaidInFull) {
           await _activatePaidInFullMode(refreshOwnerState: true);
         } else if (!serverPaidInFull) {
-          await _activateDueAmountMode(days: serverDays);
+          // Only update EMI window when device is NOT locked.
+          // markAsEmiPending() clears device_locked flag, which would
+          // create a flag flicker while the device is actively locked.
+          if (!_isDeviceLocked) {
+            await _activateDueAmountMode(days: serverDays);
+          }
           if (serverRemainingDays != null) {
             await _syncServerRemainingDays(serverRemainingDays);
           }
