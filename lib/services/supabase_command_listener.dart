@@ -127,6 +127,20 @@ class SupabaseCommandListener {
         AppLogger.log('✅ Device UNLOCKED successfully');
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('device_locked', false);
+        // Record unlock timestamp to prevent re-lock race conditions
+        await prefs.setString(
+          'last_unlock_ms',
+          DateTime.now().millisecondsSinceEpoch.toString(),
+        );
+        // Reset timer anchor so _checkTimerAndLock won't re-lock
+        await prefs.setInt(
+          'last_verified_ms',
+          DateTime.now().millisecondsSinceEpoch,
+        );
+        // Move app to background so user isn't stuck on FONEX
+        try {
+          await _methodChannel.invokeMethod('moveToBackground');
+        } catch (_) {}
       } else {
         AppLogger.log('❌ Unlock failed');
       }

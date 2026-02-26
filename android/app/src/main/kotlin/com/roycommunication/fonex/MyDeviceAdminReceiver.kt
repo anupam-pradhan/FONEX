@@ -1,9 +1,11 @@
 package com.roycommunication.fonex
 
 import android.app.admin.DeviceAdminReceiver
+import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import android.widget.Toast
 
@@ -62,6 +64,20 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
     override fun onProfileProvisioningComplete(context: Context, intent: Intent) {
         super.onProfileProvisioningComplete(context, intent)
         Log.i(TAG, "Profile provisioning complete")
+
+        // Set affiliation IDs as early as possible so GMS treats this as a
+        // personal device rather than an enterprise-managed one.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                val admin = getComponentName(context)
+                dpm.setAffiliationIds(admin, setOf("fonex-emi-personal-device"))
+                Log.i(TAG, "Affiliation IDs set during provisioning")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not set affiliation IDs during provisioning: ${e.message}")
+        }
+
         try {
             val manager = DeviceLockManager(context.applicationContext)
             manager.enforceFactoryResetBlock()

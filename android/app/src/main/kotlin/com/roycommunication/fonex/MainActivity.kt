@@ -4,6 +4,7 @@ import android.appwidget.AppWidgetManager
 import android.app.WallpaperManager
 import android.os.Bundle
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import android.content.ComponentName
@@ -81,9 +82,17 @@ class MainActivity : FlutterActivity() {
             deviceLockManager.enforceHomeLauncherForCurrentState()
 
             // If device was locked before (e.g., after reboot), re-engage lock task
-            if (deviceLockManager.isDeviceLocked()) {
+            // But NOT if device was just unlocked (prevents race condition)
+            val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+            val lastUnlockMs = prefs.getLong("last_unlock_ms", 0L)
+            val msSinceUnlock = System.currentTimeMillis() - lastUnlockMs
+            if (deviceLockManager.isDeviceLocked() && msSinceUnlock > 30_000L) {
                 Log.i(TAG, "Device locked state detected — re-engaging lock")
                 deviceLockManager.enableDeviceLock(this)
+            } else if (deviceLockManager.isDeviceLocked() && msSinceUnlock <= 30_000L) {
+                Log.i(TAG, "Device locked flag found but recently unlocked — clearing stale flag")
+                deviceLockManager.setDeviceLockedFlag(false)
+                deviceLockManager.enforceHomeLauncherForCurrentState()
             }
         }
 
@@ -104,7 +113,14 @@ class MainActivity : FlutterActivity() {
         if (deviceLockManager.isDeviceOwner()) {
             // Re-apply unpaid protections and account-login allowance on every resume.
             deviceLockManager.enforceFactoryResetBlock()
-            deviceLockManager.enforceHomeLauncherForCurrentState()
+            // Don't re-enforce home launcher if device was recently unlocked
+            // (prevents race condition that traps user in FONEX after unlock)
+            val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+            val lastUnlockMs = prefs.getLong("last_unlock_ms", 0L)
+            val msSinceUnlock = System.currentTimeMillis() - lastUnlockMs
+            if (msSinceUnlock > 30_000L) {
+                deviceLockManager.enforceHomeLauncherForCurrentState()
+            }
         }
         if (isPaidInFull()) {
             restoreOriginalSystemWallpaper()
@@ -323,10 +339,66 @@ class MainActivity : FlutterActivity() {
                     result.success(ensureConnectivityForLock())
                 }
 
+                "showCommandNotification" -> {
+                    val title = call.argument<String>("title") ?: "FONEX"
+                    val body = call.argument<String>("body") ?: ""
+                    showCommandNotification(title, body)
+                    result.success(true)
+                }
+
+                "moveToBackground" -> {
+                    moveTaskToBack(true)
+                    result.success(true)
+                }
+
                 else -> {
                     result.notImplemented()
                 }
             }
+        }
+    }
+
+    private fun showCommandNotification(title: String, body: String) {
+        try {
+            val channelId = "fonex_command_channel"
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val existing = manager.getNotificationChannel(channelId)
+                if (existing == null) {
+                    val channel = android.app.NotificationChannel(
+                        channelId,
+                        "FONEX Commands",
+                        android.app.NotificationManager.IMPORTANCE_HIGH
+                    ).apply {
+                        description = "Notifications for FONEX device commands"
+                        enableVibration(true)
+                    }
+                    manager.createNotificationChannel(channel)
+                }
+            }
+
+            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                this, 0, launchIntent,
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            )
+
+            val notification = NotificationCompat.Builder(this, channelId)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setSmallIcon(android.R.drawable.ic_lock_lock)
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .build()
+
+            val notifId = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
+            manager.notify(notifId, notification)
+            Log.i(TAG, "Command notification shown: $title")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to show command notification: ${e.message}", e)
         }
     }
 

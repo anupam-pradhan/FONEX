@@ -15,7 +15,9 @@ import 'services/device_storage_service.dart';
 import 'services/realtime_command_service.dart';
 import 'services/sync_service.dart';
 import 'services/device_state_manager.dart';
-import 'services/supabase_command_listener.dart';
+// SupabaseCommandListener removed: it duplicated RealtimeCommandService and
+// lacked device_id filtering, causing commands for other devices to execute
+// locally and every command to be processed twice.
 // =============================================================================
 // FONEX Powered by Roy Communication — Device Control System
 // =============================================================================
@@ -742,15 +744,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     WidgetsBinding.instance.addObserver(this);
     DeviceStateManager().initialize();
     SyncService().initialize();
-    SupabaseCommandListener().initialize();
     unawaited(_initialize());
 
-    // Start listening for Supabase commands (uses device ID from _realtimeDeviceId)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_realtimeDeviceId != null) {
-        SupabaseCommandListener().startListening(_realtimeDeviceId!);
-      }
-    });
+    // RealtimeCommandService handles all Supabase realtime commands
+    // (SupabaseCommandListener was removed to prevent duplicate processing)
 
     // Poll SIM state every 60 seconds while app is active (optimized: only when needed)
     _simCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) {
@@ -788,7 +785,6 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     _serverCheckInTimer?.cancel();
     SyncService().dispose();
     unawaited(RealtimeCommandService().dispose());
-    unawaited(SupabaseCommandListener().stopListening());
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -940,6 +936,21 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   Future<void> _refreshLockStateFromNative() async {
     final nativeLocked = await _readNativeDeviceLocked();
     final prefs = await SharedPreferences.getInstance();
+
+    // Don't re-engage lock if recently unlocked (cooldown to prevent race)
+    if (nativeLocked) {
+      final lastUnlockStr = prefs.getString('last_unlock_ms') ?? '0';
+      final lastUnlockMs = int.tryParse(lastUnlockStr) ?? 0;
+      if (lastUnlockMs > 0) {
+        final msSinceUnlock =
+            DateTime.now().millisecondsSinceEpoch - lastUnlockMs;
+        if (msSinceUnlock < 30000) {
+          // Recently unlocked — native flag may be stale, trust the unlock
+          return;
+        }
+      }
+    }
+
     final persistedLocked = prefs.getBool(_keyDeviceLocked) ?? false;
     if (persistedLocked != nativeLocked) {
       await prefs.setBool(_keyDeviceLocked, nativeLocked);
@@ -971,8 +982,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     final windowDays = _readLockWindowDays(prefs);
     final currentRemaining = _calculateRemainingDays(prefs, windowDays);
 
-    // Avoid jitter when server and local values differ only by timezone/rounding.
-    if ((currentRemaining - normalizedRemaining).abs() <= 1) {
+    // Avoid jitter: only skip if server says same or more days than local.
+    // Always trust server when it says fewer days (more urgent).
+    if (normalizedRemaining >= currentRemaining &&
+        (normalizedRemaining - currentRemaining) <= 1) {
       return;
     }
 
@@ -1008,6 +1021,19 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
   Future<void> _checkTimerAndLock() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // Cooldown: don't re-lock within 30 seconds of an unlock to prevent race conditions
+    final lastUnlockStr = prefs.getString('last_unlock_ms') ?? '0';
+    final lastUnlockMs = int.tryParse(lastUnlockStr) ?? 0;
+    if (lastUnlockMs > 0) {
+      final msSinceUnlock =
+          DateTime.now().millisecondsSinceEpoch - lastUnlockMs;
+      if (msSinceUnlock < 30000) {
+        // Recently unlocked — skip re-lock check
+        return;
+      }
+    }
+
     final lockWindowDays = _readLockWindowDays(prefs);
     _lockWindowDays = lockWindowDays;
     if (_isPaidInFull || prefs.getBool('is_paid_in_full') == true) {
@@ -1152,17 +1178,33 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
   }
 
-  /// FIX: Properly clear locked flag AND reset timer so device doesn't re-lock immediately.
+  /// FIX: Properly clear locked flag, reset timer anchor AND last_verified
+  /// so _checkTimerAndLock doesn't re-lock after the 30-second cooldown.
   Future<bool> _disengageDeviceLock() async {
     try {
       final success = await DeviceStateManager().disengageLock(
         resetTimerAnchor: true,
       );
-      if (success && mounted) {
-        setState(() {
-          _isDeviceLocked = false;
-          _daysRemaining = _lockWindowDays;
-        });
+      if (success) {
+        final prefs = await SharedPreferences.getInstance();
+        // Record unlock timestamp so _checkTimerAndLock won't re-lock within cooldown
+        await prefs.setString(
+          'last_unlock_ms',
+          DateTime.now().millisecondsSinceEpoch.toString(),
+        );
+        // CRITICAL: Reset the timer anchor that _checkTimerAndLock actually uses.
+        // Without this, the old expired last_verified causes immediate re-lock
+        // once the 30-second cooldown expires.
+        await prefs.setInt(
+          _keyLastVerified,
+          DateTime.now().millisecondsSinceEpoch,
+        );
+        if (mounted) {
+          setState(() {
+            _isDeviceLocked = false;
+            _daysRemaining = _lockWindowDays;
+          });
+        }
       }
       return success;
     } catch (e) {
@@ -1212,6 +1254,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
               _daysRemaining = 0;
             });
           }
+          _showCommandNotification(
+            'Device Locked',
+            'Your device has been locked due to pending payment.',
+          );
         } else {
           executed = true;
         }
@@ -1222,13 +1268,22 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           if (!executed) {
             throw Exception('Realtime UNLOCK execution failed');
           }
-          // Safety: ensure UI rebuilds to normal mode immediately
+          // Reset system UI and move app to background so user can use device
+          SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
           if (mounted) {
             setState(() {
               _isDeviceLocked = false;
               _daysRemaining = _lockWindowDays;
             });
           }
+          _showCommandNotification(
+            'Device Unlocked',
+            'Your device has been unlocked. You can use it normally.',
+          );
+          // Move FONEX to background so user isn't stuck on the app
+          try {
+            await _channel.invokeMethod('moveToBackground');
+          } catch (_) {}
         } else {
           executed = true;
         }
@@ -1247,6 +1302,18 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
     // Push an immediate health/status sync so dashboard state updates quickly.
     unawaited(_serverCheckIn());
+  }
+
+  /// Show a notification for a command/action via native channel
+  void _showCommandNotification(String title, String body) {
+    try {
+      _channel.invokeMethod('showCommandNotification', {
+        'title': title,
+        'body': body,
+      });
+    } catch (e) {
+      AppLogger.log('Notification error: $e');
+    }
   }
 
   void sendCommandAck(
@@ -1453,6 +1520,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
                   _isDeviceLocked = true;
                   _daysRemaining = 0;
                 });
+                _showCommandNotification(
+                  'Device Locked',
+                  'Your device has been locked due to pending payment.',
+                );
               }
               AppLogger.log('Server action lock applied: $locked');
             }
@@ -1462,10 +1533,18 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             if (_isDeviceLocked) {
               final unlocked = await _disengageDeviceLock();
               if (unlocked && mounted) {
+                SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
                 setState(() {
                   _isDeviceLocked = false;
                   _daysRemaining = _lockWindowDays;
                 });
+                _showCommandNotification(
+                  'Device Unlocked',
+                  'Your device has been unlocked. You can use it normally.',
+                );
+                try {
+                  await _channel.invokeMethod('moveToBackground');
+                } catch (_) {}
               }
               AppLogger.log('Server action unlock applied: $unlocked');
             }
@@ -1478,6 +1557,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
                 _parseServerDays(response['tenure']) ??
                 _lockAfterDays;
             await _activateDueAmountMode(days: days, forceResetAnchor: true);
+            _showCommandNotification(
+              'EMI Extended',
+              'Your payment window has been extended to $days days.',
+            );
             AppLogger.log('Device extended by server: $days days');
             break;
           case 'paid_in_full':
@@ -1485,6 +1568,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           case 'paid_full':
           case 'paid':
             await _activatePaidInFullMode(refreshOwnerState: true);
+            _showCommandNotification(
+              'Payment Complete',
+              'Your device is now fully paid. All restrictions removed.',
+            );
             break;
           case 'none':
             AppLogger.log('No action required from server');
@@ -2368,6 +2455,8 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     _entryController.dispose();
     _tapResetTimer?.cancel();
     _screenOffTimer?.cancel();
+    // Reset system UI so user isn't stuck in immersive mode after unlock
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 

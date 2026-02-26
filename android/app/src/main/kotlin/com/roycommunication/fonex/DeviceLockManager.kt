@@ -150,6 +150,15 @@ class DeviceLockManager(private val context: Context) {
                 Log.w(TAG, "stopLockTask skipped: ${e.message}")
             }
 
+            // Clear Lock Task packages so app cannot accidentally re-enter lock task
+            try {
+                if (isDeviceOwner()) {
+                    devicePolicyManager.setLockTaskPackages(adminComponent, arrayOf())
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not clear lock task packages: ${e.message}")
+            }
+
             // Restore status bar
             restoreStatusBar(activity)
 
@@ -187,6 +196,8 @@ class DeviceLockManager(private val context: Context) {
 
             // Update persisted state
             setDeviceLockedFlag(false)
+            // Record unlock timestamp to prevent race re-lock
+            prefs.edit().putLong("last_unlock_ms", System.currentTimeMillis()).apply()
             enforceHomeLauncherForCurrentState()
 
             Log.i(TAG, "Device lock DISABLED successfully")
@@ -468,75 +479,107 @@ class DeviceLockManager(private val context: Context) {
     }
 
     private fun allowNormalGoogleAccounts() {
-        // Block work/enterprise account types that trigger work profile setup
-        // on some OEM devices (Samsung, Xiaomi, etc.) after Device Owner provisioning.
-        val blockedWorkTypes = listOf(
-            "com.google.work", 
-            "com.android.exchange",
-            "com.google.android.work",
-            "com.google.android.gm.exchange",
-            "com.google.android.apps.enterprise.dmagent"
-        )
-        blockedWorkTypes.forEach { accountType ->
-            try {
-                devicePolicyManager.setAccountManagementDisabled(
-                    adminComponent, accountType, true
-                )
-                Log.i(TAG, "Blocked work account type '$accountType'")
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not block work account type '$accountType': ${e.message}")
-            }
-        }
+        // =====================================================================
+        // FIX: Play Store "Sign in with work account" issue.
+        //
+        // In Device Owner mode Android treats the device as fully-managed, so
+        // GMS/Play Store shows the enterprise sign-in flow.  The old approach
+        // of blocking specific work account types via setAccountManagementDisabled
+        // did NOT help (it's the Device Owner status itself that triggers the
+        // work-account UI) and could actually *worsen* the problem on some OEMs
+        // by confusing the Google Account Manager.
+        //
+        // New approach:
+        //  1. Clear ALL account-related user restrictions.
+        //  2. Enable ALL account types (including any previously-blocked ones).
+        //  3. Prevent managed-profile creation (keeps things personal-only).
+        //  4. Set affiliation IDs so GMS treats the primary user as the
+        //     owner's own user, not an enterprise-provisioned profile.
+        //  5. Unhide Play Store & Google Account packages.
+        // =====================================================================
 
-        // Keep account sign-in open for personal Google accounts while retaining
-        // EMI-related reset/uninstall restrictions.
-        val accountRestrictions = listOf(
+        // --- 1. Clear every restriction that can interfere with account sign-in ---
+        val restrictionsToClear = listOf(
             UserManager.DISALLOW_MODIFY_ACCOUNTS,
             UserManager.DISALLOW_CONFIG_CREDENTIALS,
             UserManager.DISALLOW_REMOVE_MANAGED_PROFILE
         )
-        accountRestrictions.forEach { restriction ->
+        restrictionsToClear.forEach { restriction ->
             try {
                 devicePolicyManager.clearUserRestriction(adminComponent, restriction)
             } catch (e: Exception) {
                 Log.w(TAG, "Could not clear restriction '$restriction': ${e.message}")
             }
         }
+
+        // --- 2. Enable ALL account types (un-block any previously blocked ones) ---
+        // First, explicitly enable Google accounts.
         try {
-            // Keep normal Google sign-in available, but block creation of managed/work profile
-            // which can force a workspace-only account path on some OEM builds.
-            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_ADD_MANAGED_PROFILE)
+            devicePolicyManager.setAccountManagementDisabled(
+                adminComponent, GOOGLE_ACCOUNT_TYPE, false
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not enable Google account type: ${e.message}")
+        }
+        // Then enable every authenticator type present on the device.
+        try {
+            val authenticators = AccountManager.get(context).authenticatorTypes
+            authenticators.forEach { auth ->
+                try {
+                    devicePolicyManager.setAccountManagementDisabled(
+                        adminComponent, auth.type, false
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not enable account type '${auth.type}': ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not enumerate authenticator types: ${e.message}")
+        }
+
+        // --- 3. Prevent managed/work profile creation (keeps device personal) ---
+        try {
+            devicePolicyManager.addUserRestriction(
+                adminComponent, UserManager.DISALLOW_ADD_MANAGED_PROFILE
+            )
         } catch (e: Exception) {
             Log.w(TAG, "Could not enforce managed-profile block: ${e.message}")
         }
 
-        // Only enable personal Google accounts, not work/enterprise types
-        val accountTypes = mutableSetOf(
-            GOOGLE_ACCOUNT_TYPE
-        )
-        try {
-            val authenticators = AccountManager.get(context).authenticatorTypes
-            authenticators.forEach { auth ->
-                // Skip blocked work types
-                if (auth.type !in blockedWorkTypes) {
-                    accountTypes.add(auth.type)
-                }
+        // --- 4. Set affiliation IDs (Android 8+).  Tells GMS this primary user
+        //        belongs to the management entity, which makes some GMS components
+        //        treat the account flow more like a personal device. ---
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                devicePolicyManager.setAffiliationIds(
+                    adminComponent, setOf("fonex-emi-personal-device")
+                )
+                Log.i(TAG, "Affiliation IDs set for personal-device mode")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not set affiliation IDs: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not enumerate authenticator account types: ${e.message}")
         }
 
-        accountTypes.forEach { accountType ->
+        // --- 5. Unhide Play Store & key Google packages so they work normally ---
+        val googlePackagesToUnhide = listOf(
+            "com.android.vending",                  // Play Store
+            "com.google.android.gms",               // Google Play Services
+            "com.google.android.gsf",               // Google Services Framework
+            "com.google.android.gsf.login",          // Google Account login helper
+            "com.google.android.accounts"            // Google Account Manager (some OEMs)
+        )
+        googlePackagesToUnhide.forEach { pkg ->
             try {
-                devicePolicyManager.setAccountManagementDisabled(
-                    adminComponent,
-                    accountType,
-                    false
-                )
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not enable account management for '$accountType': ${e.message}")
+                if (devicePolicyManager.isApplicationHidden(adminComponent, pkg)) {
+                    devicePolicyManager.setApplicationHidden(adminComponent, pkg, false)
+                    Log.i(TAG, "Unhid Google package: $pkg")
+                }
+            } catch (_: Exception) {
+                // Package may not exist on this device — ignore.
             }
         }
+
+        Log.i(TAG, "Account sign-in policy applied for personal-device mode")
     }
 
     private fun setWallpaperPickerAppsHidden(hidden: Boolean) {
