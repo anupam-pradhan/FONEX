@@ -3,7 +3,10 @@ import 'package:flutter/foundation.dart';
 /// A simple in-app logger to capture debug logs
 /// so they can be viewed without USB debugging.
 class AppLogger {
+  static const int _maxLogs = 800;
+  static const int _maxBufferedChars = 120000;
   static final List<String> _logs = [];
+  static int _bufferedChars = 0;
 
   // To notify listeners when new logs arrive
   static final ValueNotifier<int> logUpdateNotifier = ValueNotifier<int>(0);
@@ -13,10 +16,13 @@ class AppLogger {
     final logMessage = '[$timestamp] $message';
 
     _logs.add(logMessage);
+    _bufferedChars += logMessage.length;
 
-    // Keep only the last 500 logs to prevent memory issues
-    if (_logs.length > 500) {
-      _logs.removeAt(0);
+    // Guardrail: bound log count and memory footprint to reduce lag.
+    while (_logs.length > _maxLogs || _bufferedChars > _maxBufferedChars) {
+      final removed = _logs.removeAt(0);
+      _bufferedChars -= removed.length;
+      if (_bufferedChars < 0) _bufferedChars = 0;
     }
 
     // Also print to standard console if connected
@@ -32,6 +38,7 @@ class AppLogger {
 
   static void clear() {
     _logs.clear();
+    _bufferedChars = 0;
     logUpdateNotifier.value++;
   }
 }

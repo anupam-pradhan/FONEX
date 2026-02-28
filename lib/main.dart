@@ -18,6 +18,7 @@ import 'services/device_storage_service.dart';
 import 'services/realtime_command_service.dart';
 import 'services/sync_service.dart';
 import 'services/device_state_manager.dart';
+import 'services/crash_reporter.dart';
 // SupabaseCommandListener removed: it duplicated RealtimeCommandService and
 // lacked device_id filtering, causing commands for other devices to execute
 // locally and every command to be processed twice.
@@ -151,6 +152,7 @@ class ReminderSettings {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await CrashReporter.initialize();
   if (FonexConfig.supabaseUrl.isNotEmpty &&
       FonexConfig.supabaseAnonKey.isNotEmpty) {
     try {
@@ -176,7 +178,14 @@ Future<void> main() async {
       systemNavigationBarIconBrightness: Brightness.light,
     ),
   );
-  runApp(const FonexApp());
+  runZonedGuarded(
+    () {
+      runApp(const FonexApp());
+    },
+    (error, stack) {
+      CrashReporter.recordZoneError(error, stack);
+    },
+  );
 }
 
 // =============================================================================
@@ -807,6 +816,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   ReminderLanguage _reminderLanguage = ReminderLanguage.both;
   String? _deviceHash;
   String? _realtimeDeviceId;
+  bool _isAppInForeground = true;
+  int _backgroundHeartbeatTicks = 0;
 
   Timer? _simCheckTimer;
   Timer? _serverCheckInTimer;
@@ -826,14 +837,34 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
     // Poll SIM state every 60 seconds while app is active (optimized: only when needed)
     _simCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      if (mounted && !_isPaidInFull) _checkSimState();
+      if (!mounted || _isPaidInFull) return;
+      if (!_isAppInForeground) {
+        // Background guardrail: SIM checks every 5 minutes max.
+        if ((_backgroundHeartbeatTicks % 5) != 0) return;
+      }
+      _checkSimState();
     });
 
     // Frequent fallback heartbeat; effective interval remains larger while realtime is healthy.
     _serverCheckInTimer = Timer.periodic(
       const Duration(seconds: _fallbackServerCheckSeconds),
       (_) {
+        if (!_isAppInForeground) {
+          _backgroundHeartbeatTicks++;
+        } else {
+          _backgroundHeartbeatTicks = 0;
+        }
+
+        // Background guardrail: run heavy heartbeat every 5 minutes.
+        if (!_isAppInForeground && (_backgroundHeartbeatTicks % 5) != 0) {
+          RealtimeCommandService().ensureConnected();
+          return;
+        }
+
         RealtimeCommandService().ensureConnected();
+        if (!_isAppInForeground) {
+          unawaited(RealtimeCommandService().retryPendingAcks(maxItems: 2));
+        }
         if (!mounted || _isConnecting) return;
         if (!_isPaidInFull) {
           unawaited(_checkTimerAndLock());
@@ -921,8 +952,8 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Optimize: Only check when app resumes, not on every state change
-    if (state != AppLifecycleState.resumed) {
+    _isAppInForeground = state == AppLifecycleState.resumed;
+    if (!_isAppInForeground) {
       return;
     }
     if (mounted) {
@@ -942,9 +973,6 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           if (!_isConnecting) unawaited(_serverCheckIn());
         }
       });
-    } else if (state == AppLifecycleState.paused) {
-      // Clean up resources when app goes to background to prevent hanging
-      // Timers continue but heavy operations are paused
     }
   }
 
@@ -1940,6 +1968,13 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         });
       }
       AppLogger.log('Error during _serverCheckIn: $e\n$stacktrace');
+      unawaited(
+        CrashReporter.recordNonFatal(
+          source: 'server_check_in',
+          message: e.toString(),
+          stack: stacktrace,
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isConnecting = false);
@@ -5075,6 +5110,69 @@ class BackgroundHealthDetailsScreen extends StatelessWidget {
                     ],
                   ),
                 ),
+                const SizedBox(height: 14),
+                ValueListenableBuilder<int>(
+                  valueListenable: CrashReporter.crashCountNotifier,
+                  builder: (context, crashCount, _) {
+                    return GlassCard(
+                      padding: const EdgeInsets.all(16),
+                      borderColor: (crashCount > 0
+                              ? FonexColors.orange
+                              : FonexColors.cardBorder)
+                          .withValues(alpha: 0.35),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Crash Alerts',
+                            style: GoogleFonts.inter(
+                              color: FonexColors.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _buildRow('Captured crashes', '$crashCount'),
+                          FutureBuilder<List<Map<String, dynamic>>>(
+                            future: CrashReporter.getRecentEvents(limit: 3),
+                            builder: (context, snapshot) {
+                              final events = snapshot.data ?? const [];
+                              if (events.isEmpty) {
+                                return Text(
+                                  'No crash events captured.',
+                                  style: GoogleFonts.inter(
+                                    color: FonexColors.textSecondary,
+                                    fontSize: 12,
+                                  ),
+                                );
+                              }
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: events.map((event) {
+                                  final source =
+                                      event['source']?.toString() ?? 'unknown';
+                                  final message =
+                                      event['message']?.toString() ?? '-';
+                                  final ts = event['ts']?.toString() ?? '-';
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Text(
+                                      '$ts • $source • ${message.length > 90 ? '${message.substring(0, 90)}...' : message}',
+                                      style: GoogleFonts.inter(
+                                        color: FonexColors.textSecondary,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  );
+                                }).toList(growable: false),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ],
             );
           },
@@ -6517,8 +6615,62 @@ class _QRCodeScreenState extends State<QRCodeScreen> {
 // =============================================================================
 // DEBUG TERMINAL SCREEN - View App Logs
 // =============================================================================
-class DebugTerminalScreen extends StatelessWidget {
+class DebugTerminalScreen extends StatefulWidget {
   const DebugTerminalScreen({super.key});
+
+  @override
+  State<DebugTerminalScreen> createState() => _DebugTerminalScreenState();
+}
+
+class _DebugTerminalScreenState extends State<DebugTerminalScreen> {
+  static const _channel = MethodChannel(_channelName);
+  Timer? _statsTimer;
+  int? _batteryLevel;
+  double _memoryMb = 0;
+  int _pendingAckCount = 0;
+  int _crashCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _crashCount = CrashReporter.crashCountNotifier.value;
+    CrashReporter.crashCountNotifier.addListener(_onCrashCountChanged);
+    _refreshStats();
+    _statsTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _refreshStats();
+    });
+  }
+
+  @override
+  void dispose() {
+    _statsTimer?.cancel();
+    CrashReporter.crashCountNotifier.removeListener(_onCrashCountChanged);
+    super.dispose();
+  }
+
+  void _onCrashCountChanged() {
+    if (!mounted) return;
+    setState(() {
+      _crashCount = CrashReporter.crashCountNotifier.value;
+    });
+  }
+
+  Future<void> _refreshStats() async {
+    int? battery;
+    try {
+      battery = await _channel.invokeMethod<int>('getBatteryLevel');
+    } catch (_) {
+      battery = null;
+    }
+    final memoryMb = ProcessInfo.currentRss / (1024 * 1024);
+    final pendingAcks = RealtimeCommandService().pendingAckQueue.length;
+    if (!mounted) return;
+    setState(() {
+      _batteryLevel = battery;
+      _memoryMb = memoryMb;
+      _pendingAckCount = pendingAcks;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -6549,27 +6701,55 @@ class DebugTerminalScreen extends StatelessWidget {
               AppLogger.clear();
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.warning_amber_rounded),
+            tooltip: 'Clear captured crashes',
+            onPressed: () async {
+              await CrashReporter.clearEvents();
+            },
+          ),
         ],
       ),
-      body: ValueListenableBuilder<int>(
-        valueListenable: AppLogger.logUpdateNotifier,
-        builder: (context, _, __) {
-          final logs = AppLogger.logs.reversed.toList();
-          return ListView.builder(
-            itemCount: logs.length,
-            padding: const EdgeInsets.all(8),
-            itemBuilder: (context, index) {
-              return Text(
-                logs[index],
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  color: Colors.greenAccent,
-                ),
-              );
-            },
-          );
-        },
+      body: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            color: Colors.grey.shade900,
+            child: Text(
+              'mem=${_memoryMb.toStringAsFixed(1)}MB  '
+              'battery=${_batteryLevel?.toString() ?? '--'}%  '
+              'pendingAck=$_pendingAckCount  crashes=$_crashCount',
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11,
+                color: Colors.amberAccent,
+              ),
+            ),
+          ),
+          Expanded(
+            child: ValueListenableBuilder<int>(
+              valueListenable: AppLogger.logUpdateNotifier,
+              builder: (context, _, __) {
+                final logs = AppLogger.logs.reversed.toList();
+                return ListView.builder(
+                  itemCount: logs.length,
+                  padding: const EdgeInsets.all(8),
+                  itemBuilder: (context, index) {
+                    return Text(
+                      logs[index],
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        color: Colors.greenAccent,
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

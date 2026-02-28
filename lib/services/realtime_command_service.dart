@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:fonex/services/app_logger.dart';
+import 'package:fonex/services/crash_reporter.dart';
 
 import '../config.dart';
 
@@ -205,6 +206,7 @@ class RealtimeCommandService {
   static const String _processedCommandIdsKey = 'processed_command_ids';
   static const String _pendingAcksKey = 'pending_command_acks';
   static const int _maxProcessedCommands = 200;
+  static const int _maxPendingAcks = 250;
   static final ValueNotifier<RealtimeDiagnostics> diagnosticsNotifier =
       ValueNotifier<RealtimeDiagnostics>(RealtimeDiagnostics.initial());
 
@@ -591,6 +593,13 @@ class RealtimeCommandService {
     } catch (e, stackTrace) {
       AppLogger.log('Realtime command failed ${command.commandId}: $e');
       AppLogger.log('$stackTrace');
+      unawaited(
+        CrashReporter.recordNonFatal(
+          source: 'realtime_command',
+          message: 'Command ${command.commandId} failed: $e',
+          stack: stackTrace,
+        ),
+      );
       _updateDiagnostics(
         (current) => current.copyWith(
           lastCommandId: command.commandId,
@@ -752,6 +761,13 @@ class RealtimeCommandService {
           lastResult: result,
         ),
       );
+      while (_pendingAckQueue.length > _maxPendingAcks) {
+        final dropped = _pendingAckQueue.removeAt(0);
+        AppLogger.log(
+          'Pending ACK queue limit reached. Dropped oldest command '
+          '${dropped.commandId}',
+        );
+      }
     }
     await _savePendingAckQueue();
   }
@@ -938,6 +954,13 @@ class RealtimeCommandService {
         lastAckStatusCode: lastStatusCode,
         lastAckResult: lastBody ?? 'failed',
         lastStatus: 'ack_failed',
+      ),
+    );
+    unawaited(
+      CrashReporter.recordNonFatal(
+        source: 'command_ack',
+        message:
+            'ACK failed for $commandId attempts=$attemptsUsed status=$lastStatusCode',
       ),
     );
     return AckSendResult(
