@@ -132,18 +132,16 @@ class RealtimeCommandService {
     _scheduleReconnect(const Duration(milliseconds: 200));
   }
 
-  void sendCommandAck({
+  Future<bool> sendCommandAck({
     required String commandId,
     required String command,
     String? deviceId,
-  }) {
-    if (commandId.isEmpty) return;
-    unawaited(
-      _sendCommandAckInternal(
-        commandId: commandId,
-        command: command,
-        deviceId: deviceId,
-      ),
+  }) async {
+    if (commandId.isEmpty) return false;
+    return _sendCommandAckInternal(
+      commandId: commandId,
+      command: command,
+      deviceId: deviceId,
     );
   }
 
@@ -373,16 +371,16 @@ class RealtimeCommandService {
       ..addAll(stored);
   }
 
-  Future<void> _sendCommandAckInternal({
+  Future<bool> _sendCommandAckInternal({
     required String commandId,
     required String command,
     String? deviceId,
   }) async {
     final resolvedDeviceId = deviceId ?? _deviceId ?? '';
-    if (resolvedDeviceId.isEmpty) return;
+    if (resolvedDeviceId.isEmpty) return false;
     if (FonexConfig.deviceSecret.isEmpty) {
       AppLogger.log('ACK skipped: DEVICE_SECRET is not configured');
-      return;
+      return false;
     }
 
     final baseUri = Uri.parse(FonexConfig.serverBaseUrl);
@@ -435,7 +433,7 @@ class RealtimeCommandService {
             'ACK success: commandId=$commandId command=$command '
             'url=$ackUri',
           );
-          return;
+          return true;
         }
         AppLogger.log(
           'ACK non-2xx request details: '
@@ -465,6 +463,7 @@ class RealtimeCommandService {
       'ACK final failed request details: '
       'url=$ackUri headers=$redactedHeaders body=${jsonEncode(body)}',
     );
+    return false;
   }
 
   String _normalize(dynamic value) => value?.toString().trim() ?? '';

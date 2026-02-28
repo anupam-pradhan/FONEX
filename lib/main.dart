@@ -47,9 +47,15 @@ const String _storeName = FonexConfig.storeName;
 // =============================================================================
 class DeviceHashUtil {
   static const String _keySalt = 'device_hash_salt';
+  static const String _keyStableHash = 'device_hash_stable';
 
   static Future<String> getDeviceHash() async {
     final prefs = await SharedPreferences.getInstance();
+    final stableHash = prefs.getString(_keyStableHash);
+    if (stableHash != null && RegExp(r'^\d{6}$').hasMatch(stableHash)) {
+      return stableHash;
+    }
+
     String? salt = prefs.getString(_keySalt);
     if (salt == null) {
       final random = Random.secure();
@@ -71,7 +77,9 @@ class DeviceHashUtil {
       hash = ((hash << 5) + hash) + data.codeUnitAt(i);
       hash = hash & 0xFFFFFFFF; // 32-bit simulated bounds
     }
-    return (hash.abs() % 1000000).toString().padLeft(6, '0');
+    final computedHash = (hash.abs() % 1000000).toString().padLeft(6, '0');
+    await prefs.setString(_keyStableHash, computedHash);
+    return computedHash;
   }
 
   static String getExpectedPin(String deviceHash) {
@@ -720,6 +728,10 @@ class DeviceControlHome extends StatefulWidget {
 class _DeviceControlHomeState extends State<DeviceControlHome>
     with WidgetsBindingObserver {
   static const _channel = MethodChannel(_channelName);
+  static const String _keyReminder30Date = 'reminder_last_30_date';
+  static const String _keyReminderSundayDate = 'reminder_last_sunday_date';
+  static const String _keyReminderThreeDaysMs = 'reminder_last_3days_ms';
+  static const String _keyReminderOneDayMs = 'reminder_last_1day_ms';
 
   bool _isDeviceOwner = false;
   bool _isDeviceLocked = false;
@@ -736,6 +748,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
   Timer? _simCheckTimer;
   Timer? _serverCheckInTimer;
+  Timer? _localReminderTimer;
 
   @override
   void initState() {
@@ -777,12 +790,15 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         }
       },
     );
+
+    _startLocalReminderEngine();
   }
 
   @override
   void dispose() {
     _simCheckTimer?.cancel();
     _serverCheckInTimer?.cancel();
+    _localReminderTimer?.cancel();
     SyncService().dispose();
     unawaited(RealtimeCommandService().dispose());
     WidgetsBinding.instance.removeObserver(this);
@@ -854,6 +870,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           unawaited(_ensureBackgroundKillProtection(allowUserPrompt: false));
           RealtimeCommandService().onAppResumed();
           RealtimeCommandService().ensureConnected();
+          unawaited(_runLocalReminderCheck());
           // Immediate server check-in when app resumes for accurate status
           if (!_isConnecting) unawaited(_serverCheckIn());
         }
@@ -885,9 +902,85 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     if (!_isPaidInFull) {
       await _checkTimerAndLock();
     }
+    await _runLocalReminderCheck();
     // Attempt server check-in (non-blocking, offline-safe)
     unawaited(_serverCheckIn());
     if (mounted) setState(() => _isLoading = false);
+  }
+
+  void _startLocalReminderEngine() {
+    _localReminderTimer?.cancel();
+    _localReminderTimer = Timer.periodic(const Duration(minutes: 15), (_) {
+      if (!mounted) return;
+      unawaited(_runLocalReminderCheck());
+    });
+  }
+
+  Future<void> _runLocalReminderCheck() async {
+    if (!_isDeviceOwner || _isPaidInFull || _isDeviceLocked) return;
+    if (_daysRemaining <= 0) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final todayKey =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+    // One-time banner when remaining days reaches 30.
+    if (_daysRemaining == 30) {
+      final last30Date = prefs.getString(_keyReminder30Date);
+      if (last30Date != todayKey) {
+        _showRemainingDaysReminder(days: _daysRemaining, isUrgent: false);
+        await prefs.setString(_keyReminder30Date, todayKey);
+      }
+      return;
+    }
+
+    // Weekly reminder every Sunday when more than 3 days are left.
+    if (_daysRemaining > 3 && now.weekday == DateTime.sunday) {
+      final lastSundayDate = prefs.getString(_keyReminderSundayDate);
+      if (lastSundayDate != todayKey) {
+        _showRemainingDaysReminder(days: _daysRemaining, isUrgent: false);
+        await prefs.setString(_keyReminderSundayDate, todayKey);
+      }
+      return;
+    }
+
+    // 2-3 days remaining: notify every 6 hours.
+    if (_daysRemaining <= 3 && _daysRemaining > 1) {
+      final lastMs = prefs.getInt(_keyReminderThreeDaysMs) ?? 0;
+      if (lastMs == 0 ||
+          now.difference(DateTime.fromMillisecondsSinceEpoch(lastMs)).inHours >=
+              6) {
+        _showRemainingDaysReminder(days: _daysRemaining, isUrgent: true);
+        await prefs.setInt(_keyReminderThreeDaysMs, now.millisecondsSinceEpoch);
+      }
+      return;
+    }
+
+    // 1 day remaining: notify every 3 hours.
+    if (_daysRemaining <= 1) {
+      final lastMs = prefs.getInt(_keyReminderOneDayMs) ?? 0;
+      if (lastMs == 0 ||
+          now.difference(DateTime.fromMillisecondsSinceEpoch(lastMs)).inHours >=
+              3) {
+        _showRemainingDaysReminder(days: _daysRemaining, isUrgent: true);
+        await prefs.setInt(_keyReminderOneDayMs, now.millisecondsSinceEpoch);
+      }
+    }
+  }
+
+  void _showRemainingDaysReminder({required int days, required bool isUrgent}) {
+    final bengaliDays = days <= 0 ? 'আজ শেষ দিন' : '$days দিন বাকি';
+    final englishDays = days <= 0 ? 'Last day today' : '$days day(s) remaining';
+    final title = isUrgent
+        ? 'জরুরি রিমাইন্ডার | Urgent Reminder'
+        : 'পেমেন্ট রিমাইন্ডার | Payment Reminder';
+    final body =
+        '$bengaliDays। অনুগ্রহ করে কিস্তি সময়মতো পরিশোধ করুন। '
+        '| $englishDays. Please pay EMI on time.';
+
+    _showCommandNotification(title, body);
+    AppLogger.log('Local reminder shown: days=$days urgent=$isUrgent');
   }
 
   int _normalizeLockWindowDays(int days) {
@@ -981,6 +1074,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     final prefs = await SharedPreferences.getInstance();
     final windowDays = _readLockWindowDays(prefs);
     final currentRemaining = _calculateRemainingDays(prefs, windowDays);
+    final previousUiRemaining = _daysRemaining;
 
     // Avoid jitter: only skip if server says same or more days than local.
     // Always trust server when it says fewer days (more urgent).
@@ -1007,6 +1101,21 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     AppLogger.log(
       'Server remaining days synced accurately: $normalizedRemaining day(s)',
     );
+
+    if (normalizedRemaining != previousUiRemaining) {
+      _showRemainingDaysChangedFromServer(normalizedRemaining);
+      unawaited(_runLocalReminderCheck());
+    }
+  }
+
+  void _showRemainingDaysChangedFromServer(int days) {
+    final bengali = '$days দিন বাকি';
+    final english = '$days day(s) remaining';
+    _showCommandNotification(
+      'অবশিষ্ট দিন আপডেট | Remaining Days Updated',
+      '$bengali (সার্ভার থেকে আপডেট)। | $english (updated from server).',
+    );
+    AppLogger.log('Remaining days changed from server: $days');
   }
 
   Future<void> _checkDeviceOwner() async {
@@ -1324,11 +1433,18 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       AppLogger.log(
         'Sending ACK for commandId=${command.commandId} command=${command.command}',
       );
-      sendCommandAck(
+      final ackSucceeded = await sendCommandAck(
         command.commandId,
         command: command.command,
         deviceId: _realtimeDeviceId ?? command.deviceId,
       );
+      if (!ackSucceeded) {
+        AppLogger.log(
+          'ACK failed for commandId=${command.commandId}; '
+          'command will not be marked as processed',
+        );
+        throw Exception('Realtime ACK failed');
+      }
     }
 
     // Push an immediate health/status sync so dashboard state updates quickly.
@@ -1347,12 +1463,12 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
   }
 
-  void sendCommandAck(
+  Future<bool> sendCommandAck(
     String commandId, {
     required String command,
     String? deviceId,
   }) {
-    RealtimeCommandService().sendCommandAck(
+    return RealtimeCommandService().sendCommandAck(
       commandId: commandId,
       command: command,
       deviceId: deviceId,
