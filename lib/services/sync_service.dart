@@ -179,6 +179,8 @@ class SyncService {
     int? daysRemaining,
     Map<String, dynamic>? metadata,
   }) async {
+    final checkinUri = Uri.parse('${FonexConfig.serverBaseUrl}/checkin');
+
     // Ensure device is registered locally first
     final isRegistered = await DeviceStorageService.isDeviceRegistered();
     if (!isRegistered) {
@@ -207,9 +209,13 @@ class SyncService {
           payload['metadata'] = metadata;
         }
 
+        AppLogger.log(
+          'Check-in request attempt ${attempt + 1}/$_maxRetries: '
+          'url=$checkinUri body=${jsonEncode(payload)}',
+        );
         final response = await http
             .post(
-              Uri.parse('${FonexConfig.serverBaseUrl}/checkin'),
+              checkinUri,
               headers: {
                 'Content-Type': 'application/json',
                 'User-Agent': 'FONEX-Device/1.0',
@@ -217,6 +223,10 @@ class SyncService {
               body: jsonEncode(payload),
             )
             .timeout(Duration(seconds: FonexConfig.apiTimeoutSeconds));
+        AppLogger.log(
+          'Check-in response attempt ${attempt + 1}/$_maxRetries: '
+          'status=${response.statusCode} body=${response.body}',
+        );
 
         if (response.statusCode == 200) {
           await DeviceStorageService.updateLastSyncTimestamp();
@@ -238,9 +248,15 @@ class SyncService {
             daysRemaining: daysRemaining,
             metadata: metadata,
           );
+          AppLogger.log(
+            'Check-in queued after non-2xx response: status=${response.statusCode}',
+          );
           return null;
         }
       } catch (e) {
+        AppLogger.log(
+          'Check-in request exception attempt ${attempt + 1}/$_maxRetries: $e',
+        );
         if (attempt < _maxRetries - 1) {
           // Retry with exponential backoff
           await Future.delayed(Duration(seconds: (attempt + 1) * 2));

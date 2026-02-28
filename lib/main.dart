@@ -1882,17 +1882,47 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             break;
           case 'extend':
           case 'extend_days':
-            final days =
+            final serverRemaining = _parseServerDays(response['days_remaining']);
+            final serverWindow =
                 _parseServerDays(response['days']) ??
-                _parseServerDays(response['days_remaining']) ??
-                _parseServerDays(response['tenure']) ??
-                _lockAfterDays;
-            await _activateDueAmountMode(days: days, forceResetAnchor: true);
-            _showCommandNotification(
-              'Remaining Days Updated',
-              'Your remaining days are now set to $days.',
+                _parseServerDays(response['tenure']);
+
+            // Source of truth: days_remaining from server.
+            // Never treat remaining days as "extend by N days" locally.
+            if (serverRemaining != null) {
+              await _syncServerRemainingDays(serverRemaining);
+              _showCommandNotification(
+                'Remaining Days Updated',
+                'Your remaining days are now set to $serverRemaining.',
+              );
+              AppLogger.log(
+                'Server action extend_days applied from days_remaining: '
+                '$serverRemaining',
+              );
+              break;
+            }
+
+            // Fallback only if backend did not send days_remaining.
+            if (serverWindow != null) {
+              await _activateDueAmountMode(
+                days: serverWindow,
+                forceResetAnchor: true,
+              );
+              _showCommandNotification(
+                'Payment Window Updated',
+                'Your payment window is now set to $serverWindow days.',
+              );
+              AppLogger.log(
+                'Server action extend_days fallback applied from window days: '
+                '$serverWindow',
+              );
+              break;
+            }
+
+            AppLogger.log(
+              'Server action extend_days ignored: '
+              'no valid days_remaining/days/tenure in response',
             );
-            AppLogger.log('Remaining days updated by server: $days');
             break;
           case 'paid_in_full':
           case 'mark_paid_in_full':

@@ -870,6 +870,10 @@ class RealtimeCommandService {
       }
 
       try {
+        AppLogger.log(
+          'ACK request attempt ${attempt + 1}/$maxAttempts: '
+          'url=$ackUri headers=$redactedHeaders body=${jsonEncode(body)}',
+        );
         final response = await http
             .post(ackUri, headers: headers, body: jsonEncode(body))
             .timeout(const Duration(seconds: 8));
