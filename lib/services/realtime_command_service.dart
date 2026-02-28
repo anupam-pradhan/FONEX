@@ -52,6 +52,15 @@ class RealtimeCommandService {
   bool get isStarted => _isStarted;
   bool get isSubscribed => _isSubscribed;
 
+  static String _redactSecret(String secret) {
+    final trimmed = secret.trim();
+    if (trimmed.isEmpty) return '[EMPTY]';
+    if (trimmed.length <= 8) return '[REDACTED]';
+    final prefix = trimmed.substring(0, 4);
+    final suffix = trimmed.substring(trimmed.length - 4);
+    return '$prefix...$suffix';
+  }
+
   Future<void> start({
     required String deviceId,
     List<String> acceptedDeviceIds = const <String>[],
@@ -83,6 +92,16 @@ class RealtimeCommandService {
       );
     _commandHandler = onCommand;
     _isStarted = true;
+
+    AppLogger.log(
+      'Realtime start: supabase=${FonexConfig.supabaseUrl} '
+      'backend=${FonexConfig.serverBaseUrl} '
+      'ackPath=${FonexConfig.deviceAckPath}',
+    );
+    AppLogger.log(
+      'Realtime accepted IDs (exact match): '
+      '${_acceptedDeviceIds.toList(growable: false)}',
+    );
 
     await _loadProcessedCommandIds();
     _listenConnectivityChanges();
@@ -146,11 +165,19 @@ class RealtimeCommandService {
           callback: _handleInsertEvent,
         );
 
+    AppLogger.log(
+      'Realtime subscribe requested: '
+      'schema=public table=device_commands channel=$channelName',
+    );
+
     channel.subscribe((status, [error]) {
       if (status == RealtimeSubscribeStatus.subscribed) {
         _reconnectAttempt = 0;
         _isSubscribed = true;
-        AppLogger.log('Realtime subscribed for device $deviceId');
+        AppLogger.log(
+          'Realtime subscribed: schema=public table=device_commands '
+          'device=$deviceId acceptedIds=$_acceptedDeviceIds',
+        );
         return;
       }
 
@@ -194,25 +221,41 @@ class RealtimeCommandService {
         row['id'] ?? row['command_id'] ?? row['commandId'],
       );
       final command = _normalize(row['command']).toUpperCase();
-      final rowDeviceCandidates = <String>{
-        _normalize(row['device_id']),
-        _normalize(row['deviceId']),
-        _normalize(row['device_hash']),
-        _normalize(row['deviceHash']),
-      }..removeWhere((id) => id.isEmpty);
-      final matchedDeviceId = rowDeviceCandidates.firstWhere(
-        _acceptedDeviceIds.contains,
-        orElse: () => '',
-      );
+      final normalizedDeviceId = _normalize(row['device_id']);
+      final normalizedDeviceHash = _normalize(row['device_hash']);
+      final rowDeviceId = normalizedDeviceId.isNotEmpty
+          ? normalizedDeviceId
+          : _normalize(row['deviceId']);
+      final rowDeviceHash = normalizedDeviceHash.isNotEmpty
+          ? normalizedDeviceHash
+          : _normalize(row['deviceHash']);
+
+      final exactDeviceHashMatch =
+          rowDeviceHash.isNotEmpty &&
+          _acceptedDeviceIds.contains(rowDeviceHash);
+      final exactDeviceIdMatch =
+          rowDeviceId.isNotEmpty && _acceptedDeviceIds.contains(rowDeviceId);
+      final matchedDeviceId = exactDeviceHashMatch
+          ? rowDeviceHash
+          : (exactDeviceIdMatch ? rowDeviceId : '');
+      final rowDeviceCandidates = <String>{rowDeviceId, rowDeviceHash}
+        ..removeWhere((id) => id.isEmpty);
 
       if (commandId.isEmpty) {
         return;
       }
+
+      AppLogger.log(
+        'Realtime event received: id=$commandId command=$command '
+        'rowDeviceId=$rowDeviceId rowDeviceHash=$rowDeviceHash '
+        'hashExactMatch=$exactDeviceHashMatch idExactMatch=$exactDeviceIdMatch',
+      );
       if (matchedDeviceId.isEmpty) {
         if (command == 'LOCK' || command == 'UNLOCK') {
-          debugPrint(
-            'Realtime command ignored due to device mismatch. '
-            'rowIds=$rowDeviceCandidates acceptedIds=$_acceptedDeviceIds commandId=$commandId',
+          AppLogger.log(
+            'Realtime command ignored due to exact device mismatch. '
+            'rowIds=$rowDeviceCandidates acceptedIds=$_acceptedDeviceIds '
+            'commandId=$commandId command=$command',
           );
         }
         return;
@@ -220,6 +263,7 @@ class RealtimeCommandService {
       if (command != 'LOCK' && command != 'UNLOCK') return;
       if (_processedCommandIds.contains(commandId) ||
           _inFlightCommandIds.contains(commandId)) {
+        AppLogger.log('Realtime command skipped (duplicate): id=$commandId');
         return;
       }
 
@@ -241,8 +285,16 @@ class RealtimeCommandService {
     try {
       final handler = _commandHandler;
       if (handler == null) return;
+      AppLogger.log(
+        'Realtime command dispatch: id=${command.commandId} '
+        'command=${command.command} matchedDevice=${command.deviceId}',
+      );
       await handler(command);
       await _markCommandProcessed(command.commandId);
+      AppLogger.log(
+        'Realtime command completed: id=${command.commandId} '
+        'command=${command.command}',
+      );
     } catch (e, stackTrace) {
       AppLogger.log('Realtime command failed ${command.commandId}: $e');
       AppLogger.log('$stackTrace');
@@ -335,6 +387,10 @@ class RealtimeCommandService {
       'Content-Type': 'application/json',
       'x-device-secret': FonexConfig.deviceSecret,
     };
+    final redactedHeaders = <String, String>{
+      ...headers,
+      'x-device-secret': _redactSecret(FonexConfig.deviceSecret),
+    };
     final executedAt = DateTime.now().toUtc().toIso8601String().replaceFirst(
       RegExp(r'\.\d+Z$'),
       'Z',
@@ -361,10 +417,31 @@ class RealtimeCommandService {
         final response = await http
             .post(ackUri, headers: headers, body: jsonEncode(body))
             .timeout(const Duration(seconds: 8));
+        AppLogger.log(
+          'ACK response attempt ${attempt + 1}/$maxAttempts: '
+          'commandId=$commandId status=${response.statusCode} '
+          'body=${response.body}',
+        );
         if (response.statusCode >= 200 && response.statusCode < 300) {
+          AppLogger.log(
+            'ACK success: commandId=$commandId command=$command '
+            'url=$ackUri',
+          );
           return;
         }
+        AppLogger.log(
+          'ACK non-2xx request details: '
+          'url=$ackUri headers=$redactedHeaders body=${jsonEncode(body)}',
+        );
       } catch (_) {
+        AppLogger.log(
+          'ACK request exception attempt ${attempt + 1}/$maxAttempts '
+          'for commandId=$commandId',
+        );
+        AppLogger.log(
+          'ACK exception request details: '
+          'url=$ackUri headers=$redactedHeaders body=${jsonEncode(body)}',
+        );
         // Exponential backoff is applied below.
       }
 
@@ -375,6 +452,10 @@ class RealtimeCommandService {
 
     AppLogger.log(
       'ACK failed for command $commandId after $maxAttempts attempts',
+    );
+    AppLogger.log(
+      'ACK final failed request details: '
+      'url=$ackUri headers=$redactedHeaders body=${jsonEncode(body)}',
     );
   }
 

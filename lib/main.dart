@@ -1233,10 +1233,15 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   Future<bool> unlockDeviceLocally() => _disengageDeviceLock();
 
   Future<void> _handleRealtimeCommand(DeviceRealtimeCommand command) async {
+    AppLogger.log(
+      'Realtime command received in UI handler: '
+      'id=${command.commandId} command=${command.command} device=${command.deviceId}',
+    );
     await _refreshLockStateFromNative();
     bool executed = false;
     switch (command.command) {
       case 'LOCK':
+        AppLogger.log('LOCK execution started: commandId=${command.commandId}');
         if (_isPaidInFull) {
           AppLogger.log('Ignoring realtime LOCK: device is paid in full.');
           executed = true;
@@ -1245,8 +1250,14 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         if (!_isDeviceLocked) {
           executed = await lockDeviceLocally();
           if (!executed) {
+            AppLogger.log(
+              'LOCK execution failed: commandId=${command.commandId}',
+            );
             throw Exception('Realtime LOCK execution failed');
           }
+          AppLogger.log(
+            'LOCK execution succeeded: commandId=${command.commandId}',
+          );
           unawaited(_ensureConnectivityForLockedMode());
           if (mounted) {
             setState(() {
@@ -1259,15 +1270,28 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             'Your device has been locked due to pending payment.',
           );
         } else {
+          AppLogger.log(
+            'LOCK command already satisfied (device already locked): '
+            'commandId=${command.commandId}',
+          );
           executed = true;
         }
         break;
       case 'UNLOCK':
+        AppLogger.log(
+          'UNLOCK execution started: commandId=${command.commandId}',
+        );
         if (_isDeviceLocked) {
           executed = await unlockDeviceLocally();
           if (!executed) {
+            AppLogger.log(
+              'UNLOCK execution failed: commandId=${command.commandId}',
+            );
             throw Exception('Realtime UNLOCK execution failed');
           }
+          AppLogger.log(
+            'UNLOCK execution succeeded: commandId=${command.commandId}',
+          );
           // Reset system UI and move app to background so user can use device
           SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
           if (mounted) {
@@ -1285,6 +1309,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             await _channel.invokeMethod('moveToBackground');
           } catch (_) {}
         } else {
+          AppLogger.log(
+            'UNLOCK command already satisfied (device already unlocked): '
+            'commandId=${command.commandId}',
+          );
           executed = true;
         }
         break;
@@ -1293,6 +1321,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
 
     if (executed) {
+      AppLogger.log(
+        'Sending ACK for commandId=${command.commandId} command=${command.command}',
+      );
       sendCommandAck(
         command.commandId,
         command: command.command,

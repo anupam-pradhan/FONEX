@@ -1,0 +1,13 @@
+#!/bin/bash
+echo "=== Finding Device Hash ==="
+echo ""
+echo "Option 1: Check device logs"
+echo "Run: adb logcat | grep -i 'device.*hash\|device.*id'"
+echo ""
+echo "Option 2: Check on locked device screen"
+echo "The 'Device ID' shown on lock screen is the device_hash"
+echo ""
+echo "Option 3: Check app startup logs"
+echo "Run: adb logcat | grep -E 'Realtime.*device|acceptedIds|deviceHash'"
+echo ""
+echo "Then update your INSERT command with the correct device_hash"
