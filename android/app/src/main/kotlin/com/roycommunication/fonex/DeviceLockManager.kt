@@ -96,7 +96,7 @@ class DeviceLockManager(private val context: Context) {
             // Apply critical User Restrictions (Block Factory Reset, Safe Mode, ADB, etc.)
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
-            if (!isDebuggableBuild) {
+            if (!isDebuggableBuild()) {
                 devicePolicyManager.addUserRestriction(
                     adminComponent,
                     UserManager.DISALLOW_DEBUGGING_FEATURES

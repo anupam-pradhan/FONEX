@@ -1594,10 +1594,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
                 _lockAfterDays;
             await _activateDueAmountMode(days: days, forceResetAnchor: true);
             _showCommandNotification(
-              'EMI Extended',
-              'Your payment window has been extended to $days days.',
+              'Remaining Days Updated',
+              'Your remaining days are now set to $days.',
             );
-            AppLogger.log('Device extended by server: $days days');
+            AppLogger.log('Remaining days updated by server: $days');
             break;
           case 'paid_in_full':
           case 'mark_paid_in_full':
