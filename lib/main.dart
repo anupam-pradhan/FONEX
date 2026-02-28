@@ -4448,6 +4448,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _openCreateGoogleEmail() async {
+    try {
+      final opened =
+          await _channel.invokeMethod<bool>('openCreateGoogleAccount') ?? false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            opened
+                ? 'Opening Google account creation...'
+                : 'Unable to open Google account creation.',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to open Google account creation.'),
+        ),
+      );
+    }
+  }
+
   Future<void> _exportAuditLogs() async {
     if (_isExporting) return;
     setState(() => _isExporting = true);
@@ -4620,6 +4644,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: 'Contact Store',
                   subtitle: _supportPhone1,
                   onTap: () => launchUrl(Uri.parse('tel:$_supportPhone1')),
+                ),
+                _buildSettingTile(
+                  icon: Icons.alternate_email_rounded,
+                  title: 'Create Google Email',
+                  subtitle: 'Open Google sign-up page',
+                  onTap: _openCreateGoogleEmail,
                 ),
                 _buildSettingTile(
                   icon: Icons.person_add_alt_1_rounded,

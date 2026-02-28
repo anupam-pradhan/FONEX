@@ -201,7 +201,7 @@ class DeviceLockManager(private val context: Context) {
                 Log.w(TAG, "Could not update wallpaper restriction: ${e.message}")
             }
             setWallpaperPickerAppsHidden(hidden = !isPaidInFull)
-            allowNormalGoogleAccounts()
+            allowNormalGoogleAccounts(blockManagedProfile = !isPaidInFull)
             devicePolicyManager.setMaximumTimeToLock(adminComponent, 0L)
 
             // Exit immersive mode
@@ -328,7 +328,7 @@ class DeviceLockManager(private val context: Context) {
                     Log.w(TAG, "Could not clear wallpaper restriction: ${e.message}")
                 }
                 setWallpaperPickerAppsHidden(hidden = false)
-                allowNormalGoogleAccounts()
+                allowNormalGoogleAccounts(blockManagedProfile = false)
                 setDeviceLockedFlag(false)
                 
                 devicePolicyManager.clearDeviceOwnerApp(context.packageName)
@@ -388,9 +388,9 @@ class DeviceLockManager(private val context: Context) {
     fun enforceFactoryResetBlock(): Boolean {
         return try {
             if (isDeviceOwner()) {
-                // Ensure account login flow is not blocked by this DPC.
-                allowNormalGoogleAccounts()
                 val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
+                // Ensure account login flow is not blocked by this DPC.
+                allowNormalGoogleAccounts(blockManagedProfile = !isPaidInFull)
                 if (!isPaidInFull) {
                     // Re-apply restrictions if not paid.
                     devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
@@ -490,6 +490,74 @@ class DeviceLockManager(private val context: Context) {
     }
 
     /**
+     * Force-clear all restrictive policies for paid-in-full mode.
+     * Keeps Device Owner but removes lock-task restrictions and account friction.
+     */
+    fun enforcePaidInFullState(activity: Activity? = null): Boolean {
+        return try {
+            if (!isDeviceOwner()) return false
+
+            // Mark unlocked first so any policy re-check uses paid/unlocked state.
+            setDeviceLockedFlag(false)
+            prefs.edit().putLong("last_unlock_ms", System.currentTimeMillis()).apply()
+
+            // Best-effort exit lock task and immersive mode.
+            if (activity != null) {
+                try {
+                    activity.stopLockTask()
+                } catch (_: Exception) {}
+                disableImmersiveMode(activity)
+                restoreStatusBar(activity)
+            } else {
+                try {
+                    devicePolicyManager.setStatusBarDisabled(adminComponent, false)
+                } catch (_: Exception) {}
+            }
+
+            try {
+                devicePolicyManager.setLockTaskPackages(adminComponent, arrayOf())
+            } catch (_: Exception) {}
+
+            val restrictionsToClear = listOf(
+                UserManager.DISALLOW_FACTORY_RESET,
+                UserManager.DISALLOW_UNINSTALL_APPS,
+                UserManager.DISALLOW_SAFE_BOOT,
+                UserManager.DISALLOW_DEBUGGING_FEATURES,
+                UserManager.DISALLOW_ADD_USER,
+                UserManager.DISALLOW_REMOVE_USER,
+                UserManager.DISALLOW_CONFIG_WIFI,
+                UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS,
+                UserManager.DISALLOW_MODIFY_ACCOUNTS,
+                UserManager.DISALLOW_CONFIG_CREDENTIALS,
+                UserManager.DISALLOW_REMOVE_MANAGED_PROFILE,
+                UserManager.DISALLOW_ADD_MANAGED_PROFILE
+            )
+            restrictionsToClear.forEach { restriction ->
+                try {
+                    devicePolicyManager.clearUserRestriction(adminComponent, restriction)
+                } catch (_: Exception) {}
+            }
+            try {
+                devicePolicyManager.clearUserRestriction(adminComponent, RESTRICTION_NO_SET_WALLPAPER)
+            } catch (_: Exception) {}
+
+            try {
+                devicePolicyManager.setMaximumTimeToLock(adminComponent, 0L)
+            } catch (_: Exception) {}
+
+            setWallpaperPickerAppsHidden(hidden = false)
+            allowNormalGoogleAccounts(blockManagedProfile = false)
+            enforceHomeLauncher(unpaidMode = false)
+
+            Log.i(TAG, "Paid-in-full policy applied: all lock restrictions cleared")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to apply paid-in-full policy: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
      * Turn off the screen immediately while keeping lock mode active.
      */
     fun lockScreenNow(): Boolean {
@@ -518,7 +586,7 @@ class DeviceLockManager(private val context: Context) {
         }
     }
 
-    private fun allowNormalGoogleAccounts() {
+    private fun allowNormalGoogleAccounts(blockManagedProfile: Boolean = true) {
         // =====================================================================
         // FIX: Play Store "Sign in with work account" issue.
         //
@@ -577,13 +645,20 @@ class DeviceLockManager(private val context: Context) {
             Log.w(TAG, "Could not enumerate authenticator types: ${e.message}")
         }
 
-        // --- 3. Prevent managed/work profile creation (keeps device personal) ---
+        // --- 3. Optionally block managed/work profile creation.
+        // In paid mode we keep this unrestricted.
         try {
-            devicePolicyManager.addUserRestriction(
-                adminComponent, UserManager.DISALLOW_ADD_MANAGED_PROFILE
-            )
+            if (blockManagedProfile) {
+                devicePolicyManager.addUserRestriction(
+                    adminComponent, UserManager.DISALLOW_ADD_MANAGED_PROFILE
+                )
+            } else {
+                devicePolicyManager.clearUserRestriction(
+                    adminComponent, UserManager.DISALLOW_ADD_MANAGED_PROFILE
+                )
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Could not enforce managed-profile block: ${e.message}")
+            Log.w(TAG, "Could not update managed-profile policy: ${e.message}")
         }
 
         // --- 4. Set affiliation IDs (Android 8+).  Tells GMS this primary user

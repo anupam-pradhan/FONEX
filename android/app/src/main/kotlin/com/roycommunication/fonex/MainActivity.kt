@@ -31,6 +31,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -85,8 +86,12 @@ class MainActivity : FlutterActivity() {
 
         // Ensure reset/uninstall protection persists across app restarts.
         if (deviceLockManager.isDeviceOwner()) {
-            deviceLockManager.enforceFactoryResetBlock()
-            deviceLockManager.enforceHomeLauncherForCurrentState()
+            if (paidInFull) {
+                deviceLockManager.enforcePaidInFullState(this)
+            } else {
+                deviceLockManager.enforceFactoryResetBlock()
+                deviceLockManager.enforceHomeLauncherForCurrentState()
+            }
 
             // If device was locked before (e.g., after reboot), re-engage lock task
             // But NOT if device was just unlocked (prevents race condition)
@@ -118,15 +123,19 @@ class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         if (deviceLockManager.isDeviceOwner()) {
-            // Re-apply unpaid protections and account-login allowance on every resume.
-            deviceLockManager.enforceFactoryResetBlock()
-            // Don't re-enforce home launcher if device was recently unlocked
-            // (prevents race condition that traps user in FONEX after unlock)
-            val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
-            val lastUnlockMs = prefs.getLong("last_unlock_ms", 0L)
-            val msSinceUnlock = System.currentTimeMillis() - lastUnlockMs
-            if (msSinceUnlock > 30_000L) {
-                deviceLockManager.enforceHomeLauncherForCurrentState()
+            if (isPaidInFull()) {
+                deviceLockManager.enforcePaidInFullState(this)
+            } else {
+                // Re-apply unpaid protections and account-login allowance on every resume.
+                deviceLockManager.enforceFactoryResetBlock()
+                // Don't re-enforce home launcher if device was recently unlocked
+                // (prevents race condition that traps user in FONEX after unlock)
+                val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+                val lastUnlockMs = prefs.getLong("last_unlock_ms", 0L)
+                val msSinceUnlock = System.currentTimeMillis() - lastUnlockMs
+                if (msSinceUnlock > 30_000L) {
+                    deviceLockManager.enforceHomeLauncherForCurrentState()
+                }
             }
         }
         if (isPaidInFull()) {
@@ -316,6 +325,10 @@ class MainActivity : FlutterActivity() {
                     result.success(openAddAccountSettings())
                 }
 
+                "openCreateGoogleAccount" -> {
+                    result.success(openCreateGoogleAccount())
+                }
+
                 "showResetBlockedMessage" -> {
                     android.widget.Toast.makeText(
                         this,
@@ -339,22 +352,16 @@ class MainActivity : FlutterActivity() {
                     val paid = call.argument<Boolean>("paid") ?: false
                     val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
                     prefs.edit().putBoolean("is_paid_in_full", paid).apply()
-                    if (deviceLockManager.isDeviceOwner()) {
-                        deviceLockManager.enforceHomeLauncherForCurrentState()
-                    }
                     if (paid) {
-                        // Remove lock mode and restrictions once payment is fully completed.
-                        deviceLockManager.disableDeviceLock(this)
-                        deviceLockManager.setDeviceLockedFlag(false)
+                        // Fully clear all lock restrictions in paid mode.
+                        val cleared = deviceLockManager.enforcePaidInFullState(this)
                         restoreOriginalSystemWallpaper()
                         releaseWakeLock()
-                        // Keep Device Owner active so management can be re-applied if needed.
-                        // Paid mode still clears reset/uninstall restrictions via enforceFactoryResetBlock().
-                        deviceLockManager.enforceFactoryResetBlock()
-                        Log.i(TAG, "Paid-in-full mode enabled. Device Owner retained.")
+                        Log.i(TAG, "Paid-in-full mode enabled. policyCleared=$cleared")
                     } else {
                         // Re-enforce restrictions if payment status changes
                         deviceLockManager.enforceFactoryResetBlock()
+                        deviceLockManager.enforceHomeLauncherForCurrentState()
                         applyWarningSystemWallpaper(refreshBackup = false)
                         requestPinWarningWidgetIfSupported()
                     }
@@ -573,9 +580,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun createFallbackWallpaperBaseBitmap(): Bitmap {
-        val metrics = resources.displayMetrics
-        val width = maxOf(metrics.widthPixels, 1080)
-        val height = maxOf(metrics.heightPixels, 1920)
+        val (width, height) = getScreenWallpaperSize()
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -787,7 +792,12 @@ class MainActivity : FlutterActivity() {
             Log.w(TAG, "Failed to set desired wallpaper dimensions: ${e.message}")
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            wallpaperManager.setBitmap(wallpaperBitmap, null, true, WallpaperManager.FLAG_SYSTEM)
+            wallpaperManager.setBitmap(
+                wallpaperBitmap,
+                Rect(0, 0, screenWidth, screenHeight),
+                true,
+                WallpaperManager.FLAG_SYSTEM
+            )
         } else {
             wallpaperManager.setBitmap(wallpaperBitmap)
         }
@@ -795,8 +805,8 @@ class MainActivity : FlutterActivity() {
 
     private fun getScreenWallpaperSize(): Pair<Int, Int> {
         val metrics = resources.displayMetrics
-        val width = max(metrics.widthPixels, 1080)
-        val height = max(metrics.heightPixels, 1920)
+        val width = metrics.widthPixels.takeIf { it > 0 } ?: 1080
+        val height = metrics.heightPixels.takeIf { it > 0 } ?: 1920
         return width to height
     }
 
@@ -947,6 +957,26 @@ class MainActivity : FlutterActivity() {
             Intent(Settings.ACTION_ADD_ACCOUNT),
             Intent(Settings.ACTION_SYNC_SETTINGS),
             Intent(Settings.ACTION_SETTINGS),
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://accounts.google.com/signup")),
+        )
+
+        for (intent in intents) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                return true
+            } catch (_: Exception) {
+                // Try next fallback.
+            }
+        }
+        return false
+    }
+
+    private fun openCreateGoogleAccount(): Boolean {
+        val intents = listOf(
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://accounts.google.com/signup/v2/webcreateaccount")),
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://accounts.google.com/signup")),
+            Intent(Settings.ACTION_ADD_ACCOUNT),
         )
 
         for (intent in intents) {
