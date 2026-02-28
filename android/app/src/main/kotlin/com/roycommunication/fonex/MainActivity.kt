@@ -448,7 +448,11 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            val launchIntent =
+                packageManager.getLaunchIntentForPackage(packageName)
+                    ?: Intent(this, MainActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    }
             val pendingIntent = android.app.PendingIntent.getActivity(
                 this, 0, launchIntent,
                 android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT

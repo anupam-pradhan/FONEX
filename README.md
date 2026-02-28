@@ -196,6 +196,7 @@ flutter build apk --release
 Output path:
 
 - `build/app/outputs/flutter-apk/app-release.apk`
+- For signed release builds, create `android/key.properties` from `android/key.properties.example`.
 
 ## Configuration
 
@@ -206,7 +207,7 @@ Edit [`lib/config.dart`](lib/config.dart):
 - `supportPhone1`, `supportPhone2`
 - lock windows and app constants
 
-Also pass runtime defines in production:
+Runtime defines can override built-in defaults:
 
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
@@ -223,8 +224,8 @@ flutter run \
 
 ## Important Production Notes
 
-1. Release signing is currently debug keystore in Gradle. Replace before store release.
-2. `lib/config.dart` contains fallback defaults for Supabase key and device secret. Override with `--dart-define` for production.
+1. Signed release requires `android/key.properties`; otherwise release may be unsigned.
+2. `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `DEVICE_SECRET` can be overridden via `--dart-define`.
 3. This app is Android-specific (native Device Owner APIs).
 4. Foreground keep-alive notification is expected behavior.
 

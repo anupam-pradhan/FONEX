@@ -46,7 +46,11 @@ class KeepAliveService : Service() {
 
     private fun buildNotification(): Notification {
         createNotificationChannel()
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+        val launchIntent =
+            packageManager.getLaunchIntentForPackage(packageName)
+                ?: Intent(this, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
