@@ -1,16 +1,21 @@
 package com.roycommunication.fonex
 
+import android.Manifest
 import android.appwidget.AppWidgetManager
 import android.app.WallpaperManager
 import android.os.Bundle
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import android.content.ComponentName
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -58,6 +63,7 @@ class MainActivity : FlutterActivity() {
         private const val KEY_WARNING_WALLPAPER_LAST_APPLIED_AT = "warning_wallpaper_last_applied_at"
         private const val WARNING_WALLPAPER_VERSION = 2
         private const val WARNING_WALLPAPER_REAPPLY_COOLDOWN_MS = 8_000L
+        private const val REQUEST_CODE_POST_NOTIFICATIONS = 6013
         private const val SUPPORT_STORE_NAME = "Roy Communication"
         private const val SUPPORT_PHONE_1 = "+91 8388855549"
         private const val SUPPORT_PHONE_2 = "+91 9635252455"
@@ -74,6 +80,7 @@ class MainActivity : FlutterActivity() {
         deviceLockManager = DeviceLockManager(applicationContext)
         KeepAliveService.start(applicationContext)
         KeepAliveWatchdogWorker.schedule(applicationContext)
+        requestNotificationPermissionIfNeeded()
         val paidInFull = isPaidInFull()
 
         // Ensure reset/uninstall protection persists across app restarts.
@@ -135,6 +142,34 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         releaseWakeLock()
         super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CODE_POST_NOTIFICATIONS) {
+            val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            Log.i(TAG, "POST_NOTIFICATIONS permission result: granted=$granted")
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) return
+
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            REQUEST_CODE_POST_NOTIFICATIONS
+        )
     }
     
     private fun enableWakeLock() {
@@ -362,6 +397,22 @@ class MainActivity : FlutterActivity() {
         try {
             val channelId = "fonex_command_channel"
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            val notificationsEnabled = NotificationManagerCompat.from(this).areNotificationsEnabled()
+            if (!notificationsEnabled) {
+                Log.w(TAG, "Skipping command notification: app notifications are disabled")
+                return
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val granted = ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+                if (!granted) {
+                    Log.w(TAG, "Skipping command notification: POST_NOTIFICATIONS not granted")
+                    requestNotificationPermissionIfNeeded()
+                    return
+                }
+            }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val existing = manager.getNotificationChannel(channelId)
