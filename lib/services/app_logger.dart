@@ -28,6 +28,8 @@ class AppLogger {
 
   static List<String> get logs => List.unmodifiable(_logs);
 
+  static String toMultilineText() => _logs.join('\n');
+
   static void clear() {
     _logs.clear();
     logUpdateNotifier.value++;

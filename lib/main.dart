@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'dart:convert';
 import 'config.dart';
 import 'services/app_logger.dart';
@@ -41,6 +44,16 @@ const String _serverBaseUrl = FonexConfig.serverBaseUrl;
 const String _supportPhone1 = FonexConfig.supportPhone1;
 const String _supportPhone2 = FonexConfig.supportPhone2;
 const String _storeName = FonexConfig.storeName;
+const String _keyReminderEnabled = 'notif_reminder_enabled';
+const String _keyReminderProfile = 'notif_reminder_profile';
+const String _keyReminderLanguage = 'notif_reminder_language';
+const String _keySupportUnlockUntilMs = 'support_unlock_until_ms';
+const String _keyAntiKillAutoStartDone = 'antikill_autostart_done';
+const String _keyAntiKillBatteryDone = 'antikill_battery_done';
+
+enum ReminderProfile { balanced, frequent, minimal }
+
+enum ReminderLanguage { both, bn, en }
 
 // =============================================================================
 // DEVICE HASH UTILITY — Offline Algorithmic PIN Generation
@@ -87,6 +100,52 @@ class DeviceHashUtil {
     int hash = int.parse(deviceHash);
     int pin = (hash * 73 + 123456) % 1000000;
     return pin.toString().padLeft(6, '0');
+  }
+}
+
+class ReminderSettings {
+  static ReminderProfile profileFromRaw(String? value) {
+    switch (value) {
+      case 'frequent':
+        return ReminderProfile.frequent;
+      case 'minimal':
+        return ReminderProfile.minimal;
+      default:
+        return ReminderProfile.balanced;
+    }
+  }
+
+  static String profileToRaw(ReminderProfile profile) {
+    switch (profile) {
+      case ReminderProfile.frequent:
+        return 'frequent';
+      case ReminderProfile.minimal:
+        return 'minimal';
+      case ReminderProfile.balanced:
+        return 'balanced';
+    }
+  }
+
+  static ReminderLanguage languageFromRaw(String? value) {
+    switch (value) {
+      case 'bn':
+        return ReminderLanguage.bn;
+      case 'en':
+        return ReminderLanguage.en;
+      default:
+        return ReminderLanguage.both;
+    }
+  }
+
+  static String languageToRaw(ReminderLanguage language) {
+    switch (language) {
+      case ReminderLanguage.bn:
+        return 'bn';
+      case ReminderLanguage.en:
+        return 'en';
+      case ReminderLanguage.both:
+        return 'both';
+    }
   }
 }
 
@@ -743,6 +802,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   String _serverStatusMessage = 'Connecting...';
   DateTime? _lastServerSync;
   bool _isConnecting = false;
+  bool _reminderEnabled = true;
+  ReminderProfile _reminderProfile = ReminderProfile.balanced;
+  ReminderLanguage _reminderLanguage = ReminderLanguage.both;
   String? _deviceHash;
   String? _realtimeDeviceId;
 
@@ -808,6 +870,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   /// SIM-absent logic: lock only after 7 continuous days without a SIM.
   Future<void> _checkSimState() async {
     if (!_isDeviceOwner || _isDeviceLocked || _isPaidInFull) return;
+    if (await _isSupportUnlockWindowActive()) {
+      AppLogger.log('SIM lock check skipped: support unlock window is active');
+      return;
+    }
     try {
       final simState = await _channel.invokeMethod<int>('getSimState');
       final prefs = await SharedPreferences.getInstance();
@@ -863,6 +929,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       // Debounce rapid state changes
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) {
+          unawaited(_reloadReminderSettings());
           unawaited(_refreshLockStateFromNative());
           _checkTimerAndLock();
           _checkSimState();
@@ -885,6 +952,13 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     final prefs = await SharedPreferences.getInstance();
     final isPaidInFull = prefs.getBool('is_paid_in_full') == true;
     final storedWindow = _readLockWindowDays(prefs);
+    _reminderEnabled = prefs.getBool(_keyReminderEnabled) ?? true;
+    _reminderProfile = ReminderSettings.profileFromRaw(
+      prefs.getString(_keyReminderProfile),
+    );
+    _reminderLanguage = ReminderSettings.languageFromRaw(
+      prefs.getString(_keyReminderLanguage),
+    );
     _lockWindowDays = storedWindow;
     _daysRemaining = storedWindow;
 
@@ -908,6 +982,41 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     if (mounted) setState(() => _isLoading = false);
   }
 
+  Future<void> _reloadReminderSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _reminderEnabled = prefs.getBool(_keyReminderEnabled) ?? true;
+      _reminderProfile = ReminderSettings.profileFromRaw(
+        prefs.getString(_keyReminderProfile),
+      );
+      _reminderLanguage = ReminderSettings.languageFromRaw(
+        prefs.getString(_keyReminderLanguage),
+      );
+    });
+  }
+
+  Future<bool> _isSupportUnlockWindowActive() async {
+    final prefs = await SharedPreferences.getInstance();
+    final untilMs = prefs.getInt(_keySupportUnlockUntilMs) ?? 0;
+    return untilMs > DateTime.now().millisecondsSinceEpoch;
+  }
+
+  String _localizedText({
+    required String bn,
+    required String en,
+    required ReminderLanguage language,
+  }) {
+    switch (language) {
+      case ReminderLanguage.bn:
+        return bn;
+      case ReminderLanguage.en:
+        return en;
+      case ReminderLanguage.both:
+        return '$bn | $en';
+    }
+  }
+
   void _startLocalReminderEngine() {
     _localReminderTimer?.cancel();
     _localReminderTimer = Timer.periodic(const Duration(minutes: 15), (_) {
@@ -916,11 +1025,42 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     });
   }
 
-  Future<void> _runLocalReminderCheck() async {
-    if (!_isDeviceOwner || _isPaidInFull || _isDeviceLocked) return;
-    if (_daysRemaining <= 0) return;
+  int _profileHoursForThreeDays() {
+    switch (_reminderProfile) {
+      case ReminderProfile.frequent:
+        return 3;
+      case ReminderProfile.minimal:
+        return 12;
+      case ReminderProfile.balanced:
+        return 6;
+    }
+  }
 
+  int _profileHoursForOneDay() {
+    switch (_reminderProfile) {
+      case ReminderProfile.frequent:
+        return 1;
+      case ReminderProfile.minimal:
+        return 6;
+      case ReminderProfile.balanced:
+        return 3;
+    }
+  }
+
+  Future<void> _runLocalReminderCheck() async {
     final prefs = await SharedPreferences.getInstance();
+    _reminderEnabled = prefs.getBool(_keyReminderEnabled) ?? true;
+    _reminderProfile = ReminderSettings.profileFromRaw(
+      prefs.getString(_keyReminderProfile),
+    );
+    _reminderLanguage = ReminderSettings.languageFromRaw(
+      prefs.getString(_keyReminderLanguage),
+    );
+
+    if (!_reminderEnabled) return;
+    if (!_isDeviceOwner || _isPaidInFull || _isDeviceLocked) return;
+    if (await _isSupportUnlockWindowActive()) return;
+    if (_daysRemaining <= 0) return;
     final now = DateTime.now();
     final todayKey =
         '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
@@ -936,7 +1076,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
 
     // Weekly reminder every Sunday when more than 3 days are left.
-    if (_daysRemaining > 3 && now.weekday == DateTime.sunday) {
+    if (_reminderProfile != ReminderProfile.minimal &&
+        _daysRemaining > 3 &&
+        now.weekday == DateTime.sunday) {
       final lastSundayDate = prefs.getString(_keyReminderSundayDate);
       if (lastSundayDate != todayKey) {
         _showRemainingDaysReminder(days: _daysRemaining, isUrgent: false);
@@ -945,24 +1087,26 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       return;
     }
 
-    // 2-3 days remaining: notify every 6 hours.
+    // 2-3 days remaining: profile-controlled reminder interval.
     if (_daysRemaining <= 3 && _daysRemaining > 1) {
       final lastMs = prefs.getInt(_keyReminderThreeDaysMs) ?? 0;
+      final intervalHours = _profileHoursForThreeDays();
       if (lastMs == 0 ||
           now.difference(DateTime.fromMillisecondsSinceEpoch(lastMs)).inHours >=
-              6) {
+              intervalHours) {
         _showRemainingDaysReminder(days: _daysRemaining, isUrgent: true);
         await prefs.setInt(_keyReminderThreeDaysMs, now.millisecondsSinceEpoch);
       }
       return;
     }
 
-    // 1 day remaining: notify every 3 hours.
+    // 1 day remaining: profile-controlled reminder interval.
     if (_daysRemaining <= 1) {
       final lastMs = prefs.getInt(_keyReminderOneDayMs) ?? 0;
+      final intervalHours = _profileHoursForOneDay();
       if (lastMs == 0 ||
           now.difference(DateTime.fromMillisecondsSinceEpoch(lastMs)).inHours >=
-              3) {
+              intervalHours) {
         _showRemainingDaysReminder(days: _daysRemaining, isUrgent: true);
         await prefs.setInt(_keyReminderOneDayMs, now.millisecondsSinceEpoch);
       }
@@ -973,11 +1117,21 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     final bengaliDays = days <= 0 ? 'আজ শেষ দিন' : '$days দিন বাকি';
     final englishDays = days <= 0 ? 'Last day today' : '$days day(s) remaining';
     final title = isUrgent
-        ? 'জরুরি রিমাইন্ডার | Urgent Reminder'
-        : 'পেমেন্ট রিমাইন্ডার | Payment Reminder';
-    final body =
-        '$bengaliDays। অনুগ্রহ করে কিস্তি সময়মতো পরিশোধ করুন। '
-        '| $englishDays. Please pay EMI on time.';
+        ? _localizedText(
+            bn: 'জরুরি রিমাইন্ডার',
+            en: 'Urgent Reminder',
+            language: _reminderLanguage,
+          )
+        : _localizedText(
+            bn: 'পেমেন্ট রিমাইন্ডার',
+            en: 'Payment Reminder',
+            language: _reminderLanguage,
+          );
+    final body = _localizedText(
+      bn: '$bengaliDays। অনুগ্রহ করে কিস্তি সময়মতো পরিশোধ করুন।',
+      en: '$englishDays. Please pay EMI on time.',
+      language: _reminderLanguage,
+    );
 
     _showCommandNotification(title, body);
     AppLogger.log('Local reminder shown: days=$days urgent=$isUrgent');
@@ -1072,6 +1226,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     if (_isPaidInFull || _isDeviceLocked) return;
     final normalizedRemaining = _normalizeLockWindowDays(remainingDays);
     final prefs = await SharedPreferences.getInstance();
+    _reminderLanguage = ReminderSettings.languageFromRaw(
+      prefs.getString(_keyReminderLanguage),
+    );
     final windowDays = _readLockWindowDays(prefs);
     final currentRemaining = _calculateRemainingDays(prefs, windowDays);
     final previousUiRemaining = _daysRemaining;
@@ -1112,8 +1269,16 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     final bengali = '$days দিন বাকি';
     final english = '$days day(s) remaining';
     _showCommandNotification(
-      'অবশিষ্ট দিন আপডেট | Remaining Days Updated',
-      '$bengali (সার্ভার থেকে আপডেট)। | $english (updated from server).',
+      _localizedText(
+        bn: 'অবশিষ্ট দিন আপডেট',
+        en: 'Remaining Days Updated',
+        language: _reminderLanguage,
+      ),
+      _localizedText(
+        bn: '$bengali (সার্ভার থেকে আপডেট)।',
+        en: '$english (updated from server).',
+        language: _reminderLanguage,
+      ),
     );
     AppLogger.log('Remaining days changed from server: $days');
   }
@@ -1130,6 +1295,12 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
   Future<void> _checkTimerAndLock() async {
     final prefs = await SharedPreferences.getInstance();
+    if (await _isSupportUnlockWindowActive()) {
+      AppLogger.log(
+        'Timer lock check skipped: temporary support unlock is active',
+      );
+      return;
+    }
 
     // Cooldown: don't re-lock within 30 seconds of an unlock to prevent race conditions
     final lastUnlockStr = prefs.getString('last_unlock_ms') ?? '0';
@@ -1351,6 +1522,13 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     switch (command.command) {
       case 'LOCK':
         AppLogger.log('LOCK execution started: commandId=${command.commandId}');
+        if (await _isSupportUnlockWindowActive()) {
+          AppLogger.log(
+            'LOCK skipped: temporary support unlock window is active.',
+          );
+          executed = true;
+          break;
+        }
         if (_isPaidInFull) {
           AppLogger.log('Ignoring realtime LOCK: device is paid in full.');
           executed = true;
@@ -1646,14 +1824,20 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             await _syncServerRemainingDays(serverRemainingDays);
           }
           if (serverLocked && !_isDeviceLocked) {
-            final locked = await _engageDeviceLock();
-            if (locked && mounted) {
-              setState(() {
-                _isDeviceLocked = true;
-                _daysRemaining = 0;
-              });
+            if (await _isSupportUnlockWindowActive()) {
+              AppLogger.log(
+                'Server lock skipped: temporary support unlock is active.',
+              );
+            } else {
+              final locked = await _engageDeviceLock();
+              if (locked && mounted) {
+                setState(() {
+                  _isDeviceLocked = true;
+                  _daysRemaining = 0;
+                });
+              }
+              AppLogger.log('Server state lock sync applied: $locked');
             }
-            AppLogger.log('Server state lock sync applied: $locked');
           }
         }
 
@@ -1665,6 +1849,12 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         switch (action) {
           case 'lock':
             if (!_isPaidInFull) {
+              if (await _isSupportUnlockWindowActive()) {
+                AppLogger.log(
+                  'Server action lock ignored: support unlock window active',
+                );
+                break;
+              }
               await _refreshLockStateFromNative();
               final locked = _isDeviceLocked ? true : await _engageDeviceLock();
               if (locked && mounted) {
@@ -1994,6 +2184,109 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
     );
   }
 
+  Widget _buildBackgroundHealthCard() {
+    return ValueListenableBuilder<RealtimeDiagnostics>(
+      valueListenable: RealtimeCommandService.diagnosticsNotifier,
+      builder: (context, diagnostics, _) {
+        final lastSubscribed = diagnostics.lastSubscribedAt;
+        final lastSubscribedText = lastSubscribed == null
+            ? 'Never'
+            : _formatRelativeTime(lastSubscribed);
+        final reconnectReason = diagnostics.lastDisconnectReason ?? 'None';
+        final ackStatusText = diagnostics.lastAckStatusCode != null
+            ? '${diagnostics.lastAckStatusCode}'
+            : '-';
+        final ackResult = diagnostics.lastAckResult ?? 'N/A';
+        final commandText = diagnostics.lastCommandId == null
+            ? 'No command yet'
+            : '${diagnostics.lastCommand ?? ''} (${diagnostics.lastCommandId})';
+
+        return GlassCard(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.health_and_safety_rounded,
+                    color: FonexColors.cyan,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Background Health Monitor',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: FonexColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _buildHealthRow(
+                'Realtime',
+                diagnostics.subscribed ? 'Subscribed' : diagnostics.lastStatus,
+              ),
+              _buildHealthRow('Last subscribe', lastSubscribedText),
+              _buildHealthRow('Reconnect reason', reconnectReason),
+              _buildHealthRow('Last command', commandText),
+              _buildHealthRow(
+                'ACK',
+                'attempts=${diagnostics.lastAckAttempts ?? 0}, status=$ackStatusText',
+              ),
+              _buildHealthRow('Last ACK result', ackResult),
+              _buildHealthRow(
+                'Pending ACK queue',
+                '${diagnostics.pendingAckCount}',
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildHealthRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 132,
+            child: Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                color: FonexColors.textMuted,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                color: FonexColors.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatRelativeTime(DateTime timestamp) {
+    final diff = DateTime.now().difference(timestamp);
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
   Widget _buildProgressCard() {
     final urgentColor = widget.daysRemaining <= 7
         ? FonexColors.red
@@ -2306,6 +2599,8 @@ class _NormalModeScreenState extends State<NormalModeScreen> {
                         _buildHeroStatus(),
                         const SizedBox(height: 16),
                         _buildServerConnectionCard(),
+                        const SizedBox(height: 16),
+                        _buildBackgroundHealthCard(),
                         const SizedBox(height: 16),
                         _buildProgressCard(),
                         const SizedBox(height: 16),
@@ -4134,8 +4429,108 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
 // =============================================================================
 // SETTINGS SCREEN — App settings and preferences
 // =============================================================================
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  static const _channel = MethodChannel(_channelName);
+  bool _isExporting = false;
+
+  Future<void> _openAddAccountSettings() async {
+    try {
+      final opened =
+          await _channel.invokeMethod<bool>('openAddAccountSettings') ?? false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            opened
+                ? 'Opening account settings...'
+                : 'Unable to open account settings.',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to open account settings.')),
+      );
+    }
+  }
+
+  Future<void> _exportAuditLogs() async {
+    if (_isExporting) return;
+    setState(() => _isExporting = true);
+    try {
+      final diagnostics = RealtimeCommandService.diagnosticsNotifier.value;
+      final syncStatus = await SyncService().getSyncStatus();
+      final pendingAcks = RealtimeCommandService().pendingAckQueue;
+      final buffer = StringBuffer()
+        ..writeln('FONEX Audit Export')
+        ..writeln('Generated: ${DateTime.now().toIso8601String()}')
+        ..writeln('')
+        ..writeln('Realtime Diagnostics:')
+        ..writeln('  started=${diagnostics.started}')
+        ..writeln('  subscribed=${diagnostics.subscribed}')
+        ..writeln('  reconnecting=${diagnostics.reconnecting}')
+        ..writeln('  reconnect_attempt=${diagnostics.reconnectAttempt}')
+        ..writeln('  last_status=${diagnostics.lastStatus}')
+        ..writeln('  last_disconnect_reason=${diagnostics.lastDisconnectReason}')
+        ..writeln('  last_subscribed_at=${diagnostics.lastSubscribedAt}')
+        ..writeln('  last_command_id=${diagnostics.lastCommandId}')
+        ..writeln('  last_command=${diagnostics.lastCommand}')
+        ..writeln('  last_command_stage=${diagnostics.lastCommandStage}')
+        ..writeln('  last_ack_attempts=${diagnostics.lastAckAttempts}')
+        ..writeln('  last_ack_status=${diagnostics.lastAckStatusCode}')
+        ..writeln('  last_ack_result=${diagnostics.lastAckResult}')
+        ..writeln('  pending_ack_count=${diagnostics.pendingAckCount}')
+        ..writeln('')
+        ..writeln('Pending ACK Queue:');
+      for (final item in pendingAcks) {
+        buffer.writeln(
+          '  - id=${item.commandId} cmd=${item.command} device=${item.deviceId} '
+          'queued=${item.queuedAt.toIso8601String()} retries=${item.retryCount} '
+          'status=${item.lastStatusCode} result=${item.lastResult}',
+        );
+      }
+      buffer
+        ..writeln('')
+        ..writeln('Sync Status: $syncStatus')
+        ..writeln('')
+        ..writeln('App Logs:')
+        ..writeln(AppLogger.toMultilineText());
+
+      final dir = await getTemporaryDirectory();
+      final filename =
+          'fonex_audit_${DateTime.now().millisecondsSinceEpoch}.log';
+      final file = File('${dir.path}/$filename');
+      await file.writeAsString(buffer.toString());
+
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'text/plain')],
+        text: 'FONEX audit log export',
+        subject: 'FONEX audit log',
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Audit log exported: ${file.path}')),
+      );
+      AppLogger.log('Audit log exported: ${file.path}');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Audit export failed: $e')),
+      );
+      AppLogger.log('Audit export failed: $e');
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -4154,6 +4549,68 @@ class SettingsScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              _buildSettingsSection('Notifications', [
+                _buildSettingTile(
+                  icon: Icons.notifications_active_rounded,
+                  title: 'Notification Preferences',
+                  subtitle: 'Reminder frequency + language (BN/EN/Both)',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const NotificationPreferencesScreen(),
+                    ),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 24),
+              _buildSettingsSection('Protection Health', [
+                _buildSettingTile(
+                  icon: Icons.health_and_safety_rounded,
+                  title: 'Background Health Monitor',
+                  subtitle: 'Realtime status, reconnect reason, ACK queue',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const BackgroundHealthDetailsScreen(),
+                    ),
+                  ),
+                ),
+                _buildSettingTile(
+                  icon: Icons.security_update_warning_rounded,
+                  title: 'Anti-kill Setup Assistant',
+                  subtitle: 'Auto-start + battery unrestricted guidance',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AntiKillSetupAssistantScreen(),
+                    ),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 24),
+              _buildSettingsSection('Diagnostics', [
+                _buildSettingTile(
+                  icon: Icons.build_circle_outlined,
+                  title: 'Recovery Actions',
+                  subtitle:
+                      'Reconnect realtime, resync state, clear stale lock flag',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const RecoveryActionsScreen(),
+                    ),
+                  ),
+                ),
+                _buildSettingTile(
+                  icon: Icons.ios_share_rounded,
+                  title: 'Export Audit Log',
+                  subtitle: _isExporting
+                      ? 'Preparing export...'
+                      : 'Share app logs + realtime diagnostics',
+                  onTap: _isExporting ? null : _exportAuditLogs,
+                ),
+              ]),
+              const SizedBox(height: 24),
               _buildSettingsSection('App Information', [
                 _buildSettingTile(
                   icon: Icons.info_outline_rounded,
@@ -4179,58 +4636,10 @@ class SettingsScreen extends StatelessWidget {
                   onTap: () => launchUrl(Uri.parse('tel:$_supportPhone1')),
                 ),
                 _buildSettingTile(
-                  icon: Icons.help_outline_rounded,
-                  title: 'Help & Support',
-                  subtitle: 'Get help with your device',
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const AboutScreen()),
-                  ),
-                ),
-              ]),
-              const SizedBox(height: 24),
-              _buildSettingsSection('System', [
-                _buildSettingTile(
-                  icon: Icons.refresh_rounded,
-                  title: 'Sync with Server',
-                  subtitle: 'Manually sync device status',
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Syncing with server...')),
-                    );
-                  },
-                ),
-                _buildSettingTile(
                   icon: Icons.person_add_alt_1_rounded,
                   title: 'Add Account',
                   subtitle: 'Open Android account settings',
-                  onTap: () async {
-                    try {
-                      const channel = MethodChannel(_channelName);
-                      final opened =
-                          await channel.invokeMethod<bool>(
-                            'openAddAccountSettings',
-                          ) ??
-                          false;
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            opened
-                                ? 'Opening account settings...'
-                                : 'Unable to open account settings.',
-                          ),
-                        ),
-                      );
-                    } catch (_) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Failed to open account settings.'),
-                        ),
-                      );
-                    }
-                  },
+                  onTap: _openAddAccountSettings,
                 ),
               ]),
             ],
@@ -4298,13 +4707,828 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 )
               : null,
-          trailing: onTap != null
-              ? const Icon(
-                  Icons.chevron_right_rounded,
-                  color: FonexColors.textMuted,
-                )
-              : null,
+          trailing: const Icon(
+            Icons.chevron_right_rounded,
+            color: FonexColors.textMuted,
+          ),
           onTap: onTap,
+        ),
+      ),
+    );
+  }
+}
+
+class NotificationPreferencesScreen extends StatefulWidget {
+  const NotificationPreferencesScreen({super.key});
+
+  @override
+  State<NotificationPreferencesScreen> createState() =>
+      _NotificationPreferencesScreenState();
+}
+
+class _NotificationPreferencesScreenState
+    extends State<NotificationPreferencesScreen> {
+  bool _enabled = true;
+  ReminderProfile _profile = ReminderProfile.balanced;
+  ReminderLanguage _language = ReminderLanguage.both;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _enabled = prefs.getBool(_keyReminderEnabled) ?? true;
+      _profile = ReminderSettings.profileFromRaw(
+        prefs.getString(_keyReminderProfile),
+      );
+      _language = ReminderSettings.languageFromRaw(
+        prefs.getString(_keyReminderLanguage),
+      );
+      _loading = false;
+    });
+  }
+
+  Future<void> _save() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyReminderEnabled, _enabled);
+    await prefs.setString(
+      _keyReminderProfile,
+      ReminderSettings.profileToRaw(_profile),
+    );
+    await prefs.setString(
+      _keyReminderLanguage,
+      ReminderSettings.languageToRaw(_language),
+    );
+    AppLogger.log(
+      'Reminder settings updated: enabled=$_enabled profile=$_profile lang=$_language',
+    );
+  }
+
+  String _profileLabel(ReminderProfile profile) {
+    switch (profile) {
+      case ReminderProfile.frequent:
+        return 'Frequent';
+      case ReminderProfile.minimal:
+        return 'Minimal';
+      case ReminderProfile.balanced:
+        return 'Balanced';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Notification Preferences',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+        ),
+        backgroundColor: FonexColors.surface,
+      ),
+      body: AnimatedGradientBg(
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  GlassCard(
+                    child: SwitchListTile(
+                      value: _enabled,
+                      title: Text(
+                        'Enable local reminders',
+                        style: GoogleFonts.inter(
+                          color: FonexColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        'Applies without server push',
+                        style: GoogleFonts.inter(
+                          color: FonexColors.textSecondary,
+                        ),
+                      ),
+                      onChanged: (value) async {
+                        setState(() => _enabled = value);
+                        await _save();
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  GlassCard(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Reminder Frequency',
+                          style: GoogleFonts.inter(
+                            color: FonexColors.textPrimary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        for (final profile in ReminderProfile.values)
+                          RadioListTile<ReminderProfile>(
+                            value: profile,
+                            groupValue: _profile,
+                            activeColor: FonexColors.accent,
+                            title: Text(
+                              _profileLabel(profile),
+                              style: GoogleFonts.inter(
+                                color: FonexColors.textPrimary,
+                              ),
+                            ),
+                            onChanged: (value) async {
+                              if (value == null) return;
+                              setState(() => _profile = value);
+                              await _save();
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  GlassCard(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Reminder Language',
+                          style: GoogleFonts.inter(
+                            color: FonexColors.textPrimary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        RadioListTile<ReminderLanguage>(
+                          value: ReminderLanguage.both,
+                          groupValue: _language,
+                          activeColor: FonexColors.accent,
+                          title: Text(
+                            'Bengali + English',
+                            style: GoogleFonts.inter(
+                              color: FonexColors.textPrimary,
+                            ),
+                          ),
+                          onChanged: (value) async {
+                            if (value == null) return;
+                            setState(() => _language = value);
+                            await _save();
+                          },
+                        ),
+                        RadioListTile<ReminderLanguage>(
+                          value: ReminderLanguage.bn,
+                          groupValue: _language,
+                          activeColor: FonexColors.accent,
+                          title: Text(
+                            'Bengali only',
+                            style: GoogleFonts.inter(
+                              color: FonexColors.textPrimary,
+                            ),
+                          ),
+                          onChanged: (value) async {
+                            if (value == null) return;
+                            setState(() => _language = value);
+                            await _save();
+                          },
+                        ),
+                        RadioListTile<ReminderLanguage>(
+                          value: ReminderLanguage.en,
+                          groupValue: _language,
+                          activeColor: FonexColors.accent,
+                          title: Text(
+                            'English only',
+                            style: GoogleFonts.inter(
+                              color: FonexColors.textPrimary,
+                            ),
+                          ),
+                          onChanged: (value) async {
+                            if (value == null) return;
+                            setState(() => _language = value);
+                            await _save();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+class BackgroundHealthDetailsScreen extends StatelessWidget {
+  const BackgroundHealthDetailsScreen({super.key});
+
+  String _formatTime(DateTime? time) {
+    if (time == null) return 'Never';
+    final diff = DateTime.now().difference(time);
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
+  Widget _buildRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 150,
+            child: Text(
+              label,
+              style: GoogleFonts.inter(
+                color: FonexColors.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.inter(
+                color: FonexColors.textPrimary,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Background Health',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+        ),
+        backgroundColor: FonexColors.surface,
+      ),
+      body: AnimatedGradientBg(
+        child: ValueListenableBuilder<RealtimeDiagnostics>(
+          valueListenable: RealtimeCommandService.diagnosticsNotifier,
+          builder: (context, diagnostics, _) {
+            final queue = RealtimeCommandService().pendingAckQueue;
+            return ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                GlassCard(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Realtime Monitor',
+                        style: GoogleFonts.inter(
+                          color: FonexColors.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _buildRow('Status', diagnostics.lastStatus),
+                      _buildRow(
+                        'Subscribed',
+                        diagnostics.subscribed ? 'Yes' : 'No',
+                      ),
+                      _buildRow(
+                        'Last subscribe',
+                        _formatTime(diagnostics.lastSubscribedAt),
+                      ),
+                      _buildRow(
+                        'Last reconnect reason',
+                        diagnostics.lastDisconnectReason ?? 'None',
+                      ),
+                      _buildRow(
+                        'Last command',
+                        diagnostics.lastCommandId == null
+                            ? 'No command received'
+                            : '${diagnostics.lastCommand} (${diagnostics.lastCommandId})',
+                      ),
+                      _buildRow(
+                        'Command stage',
+                        diagnostics.lastCommandStage ?? '-',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                GlassCard(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'ACK Queue Visibility',
+                        style: GoogleFonts.inter(
+                          color: FonexColors.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _buildRow(
+                        'Last ACK',
+                        'attempts=${diagnostics.lastAckAttempts ?? 0}, status=${diagnostics.lastAckStatusCode ?? '-'}',
+                      ),
+                      _buildRow(
+                        'Last ACK result',
+                        diagnostics.lastAckResult ?? '-',
+                      ),
+                      _buildRow('Pending ACK count', '${queue.length}'),
+                      const SizedBox(height: 8),
+                      if (queue.isEmpty)
+                        Text(
+                          'No pending ACK items.',
+                          style: GoogleFonts.inter(
+                            color: FonexColors.textSecondary,
+                            fontSize: 12,
+                          ),
+                        )
+                      else
+                        ...queue.take(5).map((item) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Text(
+                              '${item.command} • ${item.commandId} • retries=${item.retryCount}',
+                              style: GoogleFonts.inter(
+                                color: FonexColors.textSecondary,
+                                fontSize: 11,
+                              ),
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class AntiKillSetupAssistantScreen extends StatefulWidget {
+  const AntiKillSetupAssistantScreen({super.key});
+
+  @override
+  State<AntiKillSetupAssistantScreen> createState() =>
+      _AntiKillSetupAssistantScreenState();
+}
+
+class _AntiKillSetupAssistantScreenState
+    extends State<AntiKillSetupAssistantScreen> {
+  static const _channel = MethodChannel(_channelName);
+  bool _isIgnoringBatteryOptimizations = false;
+  bool _autoStartDone = false;
+  bool _batteryDone = false;
+  String _manufacturer = 'android';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final info =
+        await _channel.invokeMapMethod<String, dynamic>('getDeviceInfo') ??
+        <String, dynamic>{};
+    final ignoring =
+        await _channel.invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
+        false;
+    if (!mounted) return;
+    setState(() {
+      _manufacturer = (info['manufacturer']?.toString() ?? 'android')
+          .toLowerCase();
+      _isIgnoringBatteryOptimizations = ignoring;
+      _autoStartDone = prefs.getBool(_keyAntiKillAutoStartDone) ?? false;
+      _batteryDone = prefs.getBool(_keyAntiKillBatteryDone) ?? ignoring;
+    });
+  }
+
+  Future<void> _setDone(String key, bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(key, value);
+    await _load();
+  }
+
+  List<String> _stepsForBrand() {
+    if (_manufacturer.contains('xiaomi') || _manufacturer.contains('redmi')) {
+      return const <String>[
+        'Open Auto-start settings and allow FONEX.',
+        'Set Battery to No restrictions for FONEX.',
+        'Lock FONEX in recent apps if available.',
+      ];
+    }
+    if (_manufacturer.contains('oppo') || _manufacturer.contains('realme')) {
+      return const <String>[
+        'Allow startup manager access for FONEX.',
+        'Disable battery optimization for FONEX.',
+        'Allow background activity.',
+      ];
+    }
+    if (_manufacturer.contains('vivo') || _manufacturer.contains('iqoo')) {
+      return const <String>[
+        'Enable autostart for FONEX.',
+        'Set background power usage to unrestricted.',
+        'Disable background app kill for FONEX.',
+      ];
+    }
+    if (_manufacturer.contains('samsung')) {
+      return const <String>[
+        'Put FONEX in Never sleeping apps.',
+        'Disable battery optimization for FONEX.',
+        'Allow background activity in app info.',
+      ];
+    }
+    return const <String>[
+      'Allow auto-start/background run for FONEX.',
+      'Disable battery optimization for FONEX.',
+      'Ensure notifications are enabled for reminders.',
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final allDone = _autoStartDone && (_batteryDone || _isIgnoringBatteryOptimizations);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Anti-kill Setup Assistant',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+        ),
+        backgroundColor: FonexColors.surface,
+      ),
+      body: AnimatedGradientBg(
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            GlassCard(
+              child: ListTile(
+                leading: Icon(
+                  allDone ? Icons.check_circle : Icons.warning_amber_rounded,
+                  color: allDone ? FonexColors.green : FonexColors.orange,
+                ),
+                title: Text(
+                  allDone ? 'Setup complete' : 'Setup incomplete',
+                  style: GoogleFonts.inter(
+                    color: FonexColors.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                subtitle: Text(
+                  'Brand detected: ${_manufacturer.toUpperCase()}',
+                  style: GoogleFonts.inter(color: FonexColors.textSecondary),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Recommended Steps',
+                    style: GoogleFonts.inter(
+                      color: FonexColors.textPrimary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  for (int i = 0; i < _stepsForBrand().length; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '${i + 1}. ${_stepsForBrand()[i]}',
+                        style: GoogleFonts.inter(
+                          color: FonexColors.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            GlassCard(
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.play_circle_outline_rounded),
+                    title: Text(
+                      'Open Auto-start settings',
+                      style: GoogleFonts.inter(color: FonexColors.textPrimary),
+                    ),
+                    trailing: const Icon(Icons.open_in_new_rounded),
+                    onTap: () => _channel.invokeMethod('openAutoStartSettings'),
+                  ),
+                  SwitchListTile(
+                    value: _autoStartDone,
+                    title: Text(
+                      'Mark auto-start step complete',
+                      style: GoogleFonts.inter(color: FonexColors.textPrimary),
+                    ),
+                    onChanged: (value) => _setDone(
+                      _keyAntiKillAutoStartDone,
+                      value,
+                    ),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.battery_saver_rounded),
+                    title: Text(
+                      'Open battery optimization settings',
+                      style: GoogleFonts.inter(color: FonexColors.textPrimary),
+                    ),
+                    trailing: const Icon(Icons.open_in_new_rounded),
+                    onTap: () =>
+                        _channel.invokeMethod('requestIgnoreBatteryOptimizations'),
+                  ),
+                  SwitchListTile(
+                    value: _batteryDone || _isIgnoringBatteryOptimizations,
+                    title: Text(
+                      _isIgnoringBatteryOptimizations
+                          ? 'Battery already unrestricted'
+                          : 'Mark battery step complete',
+                      style: GoogleFonts.inter(color: FonexColors.textPrimary),
+                    ),
+                    onChanged: _isIgnoringBatteryOptimizations
+                        ? null
+                        : (value) => _setDone(_keyAntiKillBatteryDone, value),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class RecoveryActionsScreen extends StatefulWidget {
+  const RecoveryActionsScreen({super.key});
+
+  @override
+  State<RecoveryActionsScreen> createState() => _RecoveryActionsScreenState();
+}
+
+class _RecoveryActionsScreenState extends State<RecoveryActionsScreen> {
+  static const _channel = MethodChannel(_channelName);
+  bool _busy = false;
+  int _supportUntilMs = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadSupportWindow());
+  }
+
+  Future<void> _loadSupportWindow() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _supportUntilMs = prefs.getInt(_keySupportUnlockUntilMs) ?? 0;
+    });
+  }
+
+  Future<void> _runAction(String label, Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$label completed')),
+      );
+      AppLogger.log('Recovery action completed: $label');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$label failed: $e')),
+      );
+      AppLogger.log('Recovery action failed: $label error=$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _reconnectRealtime() async {
+    await RealtimeCommandService().reconnectNow();
+    await RealtimeCommandService().retryPendingAcks();
+  }
+
+  Future<void> _resyncNow() async {
+    await DeviceStateManager().syncStateWithNative();
+    await SyncService().manualSync();
+    RealtimeCommandService().ensureConnected();
+  }
+
+  Future<void> _clearStaleLockFlag() async {
+    final isNativeLocked =
+        await _channel.invokeMethod<bool>('isDeviceLocked') ?? false;
+    if (isNativeLocked) {
+      throw Exception('Native device lock is active. Unlock first.');
+    }
+    await _channel.invokeMethod('setDeviceLocked', {'locked': false});
+    AppLogger.log('Stale local lock flag cleared from recovery actions');
+  }
+
+  Future<void> _activateSupportWindow() async {
+    final pinController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Enter local PIN'),
+          content: TextField(
+            controller: pinController,
+            keyboardType: TextInputType.number,
+            obscureText: true,
+            decoration: const InputDecoration(hintText: 'Owner PIN'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Activate 30 min'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+
+    final pin = pinController.text.trim();
+    final valid = await _channel.invokeMethod<bool>('validatePin', {
+          'pin': pin,
+        }) ??
+        false;
+    if (!valid) {
+      throw Exception('Invalid PIN');
+    }
+
+    final until = DateTime.now().add(const Duration(minutes: 30));
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keySupportUnlockUntilMs, until.millisecondsSinceEpoch);
+
+    await _channel.invokeMethod('setDeviceLocked', {'locked': false});
+    await _channel.invokeMethod('stopDeviceLock');
+    AppLogger.log(
+      'Support unlock window enabled until ${until.toIso8601String()}',
+    );
+    await _loadSupportWindow();
+  }
+
+  Future<void> _endSupportWindowNow() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keySupportUnlockUntilMs);
+    AppLogger.log('Support unlock window disabled manually');
+    await _loadSupportWindow();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final active = _supportUntilMs > nowMs;
+    final remaining = active
+        ? Duration(milliseconds: _supportUntilMs - nowMs)
+        : Duration.zero;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Recovery Actions',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+        ),
+        backgroundColor: FonexColors.surface,
+      ),
+      body: AnimatedGradientBg(
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Recovery Panel',
+                    style: GoogleFonts.inter(
+                      color: FonexColors.textPrimary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      FilledButton.tonal(
+                        onPressed: _busy
+                            ? null
+                            : () => _runAction(
+                                  'Reconnect realtime',
+                                  _reconnectRealtime,
+                                ),
+                        child: const Text('Reconnect Realtime Now'),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: _busy
+                            ? null
+                            : () => _runAction('Resync state', _resyncNow),
+                        child: const Text('Resync State Now'),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: _busy
+                            ? null
+                            : () => _runAction(
+                                  'Clear stale lock flag',
+                                  _clearStaleLockFlag,
+                                ),
+                        child: const Text('Clear Stale Lock Flag'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            GlassCard(
+              padding: const EdgeInsets.all(16),
+              borderColor: (active ? FonexColors.orange : FonexColors.cardBorder)
+                  .withValues(alpha: 0.4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Safe Mode for Support',
+                    style: GoogleFonts.inter(
+                      color: FonexColors.textPrimary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    active
+                        ? 'Temporary unlock active for ${remaining.inMinutes} min.'
+                        : 'Activate a 30-minute local support unlock window.',
+                    style: GoogleFonts.inter(
+                      color: FonexColors.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 10,
+                    children: [
+                      FilledButton(
+                        onPressed: _busy
+                            ? null
+                            : () => _runAction(
+                                  'Enable support unlock window',
+                                  _activateSupportWindow,
+                                ),
+                        child: const Text('Activate 30 min Window'),
+                      ),
+                      OutlinedButton(
+                        onPressed: _busy || !active
+                            ? null
+                            : () => _runAction(
+                                  'Disable support window',
+                                  _endSupportWindowNow,
+                                ),
+                        child: const Text('End Support Window'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -5308,6 +6532,17 @@ class DebugTerminalScreen extends StatelessWidget {
         backgroundColor: Colors.grey[900],
         iconTheme: const IconThemeData(color: Colors.greenAccent),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.build_circle_outlined),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const RecoveryActionsScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
             onPressed: () {
