@@ -42,6 +42,7 @@ class RealtimeCommandService {
   bool _isReconnecting = false;
   bool _isSubscribed = false;
   int _reconnectAttempt = 0;
+  int _channelLifecycleToken = 0;
   String? _deviceId;
   final Set<String> _acceptedDeviceIds = <String>{};
   Future<void> Function(DeviceRealtimeCommand command)? _commandHandler;
@@ -156,6 +157,7 @@ class RealtimeCommandService {
 
     final channelName = 'device-commands-$deviceId';
     final supabase = Supabase.instance.client;
+    final lifecycleToken = ++_channelLifecycleToken;
     final channel = supabase
         .channel(channelName)
         .onPostgresChanges(
@@ -167,16 +169,20 @@ class RealtimeCommandService {
 
     AppLogger.log(
       'Realtime subscribe requested: '
-      'schema=public table=device_commands channel=$channelName',
+      'schema=public table=device_commands channel=$channelName '
+      'token=$lifecycleToken',
     );
 
     channel.subscribe((status, [error]) {
+      if (lifecycleToken != _channelLifecycleToken) {
+        return;
+      }
       if (status == RealtimeSubscribeStatus.subscribed) {
         _reconnectAttempt = 0;
         _isSubscribed = true;
         AppLogger.log(
           'Realtime subscribed: schema=public table=device_commands '
-          'device=$deviceId acceptedIds=$_acceptedDeviceIds',
+          'device=$deviceId acceptedIds=$_acceptedDeviceIds token=$lifecycleToken',
         );
         return;
       }
@@ -186,7 +192,8 @@ class RealtimeCommandService {
           status == RealtimeSubscribeStatus.closed) {
         _isSubscribed = false;
         debugPrint(
-          'Realtime disconnected ($status): ${error ?? 'no error details'}',
+          'Realtime disconnected ($status token=$lifecycleToken): '
+          '${error ?? 'no error details'}',
         );
         _scheduleReconnect(_nextReconnectDelay());
       }
@@ -197,6 +204,7 @@ class RealtimeCommandService {
 
   Future<void> _unsubscribe() async {
     final existing = _channel;
+    _channelLifecycleToken++;
     _channel = null;
     _isSubscribed = false;
     if (existing != null) {

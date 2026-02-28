@@ -2,12 +2,14 @@ package com.roycommunication.fonex
 
 import android.accounts.AccountManager
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.provider.Settings
 import android.os.UserManager
@@ -62,6 +64,10 @@ class DeviceLockManager(private val context: Context) {
         return devicePolicyManager.isDeviceOwnerApp(context.packageName)
     }
 
+    private fun isDebuggableBuild(): Boolean {
+        return (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+
     /**
      * Enable device lock — enters Lock Task mode using DevicePolicyManager.
      * Requires Device Owner privilege.
@@ -90,7 +96,7 @@ class DeviceLockManager(private val context: Context) {
             // Apply critical User Restrictions (Block Factory Reset, Safe Mode, ADB, etc.)
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
-            if (!BuildConfig.DEBUG) {
+            if (!isDebuggableBuild) {
                 devicePolicyManager.addUserRestriction(
                     adminComponent,
                     UserManager.DISALLOW_DEBUGGING_FEATURES
@@ -227,6 +233,16 @@ class DeviceLockManager(private val context: Context) {
      */
     fun setDeviceLockedFlag(locked: Boolean) {
         prefs.edit().putBoolean(KEY_DEVICE_LOCKED, locked).apply()
+    }
+
+    private fun isLockTaskModeActive(): Boolean {
+        return try {
+            val activityManager =
+                context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            activityManager.lockTaskModeState == ActivityManager.LOCK_TASK_MODE_LOCKED
+        } catch (_: Exception) {
+            false
+        }
     }
 
     /**
@@ -424,6 +440,13 @@ class DeviceLockManager(private val context: Context) {
                 context.packageName
             )
 
+            // During debug/testing, do not force FONEX as HOME launcher.
+            // This avoids trapping navigation while validating command flows.
+            if (isDebuggableBuild()) {
+                Log.i(TAG, "Debug build: skipping persistent HOME launcher enforcement")
+                return true
+            }
+
             if (unpaidMode) {
                 val filter = IntentFilter(Intent.ACTION_MAIN).apply {
                     addCategory(Intent.CATEGORY_HOME)
@@ -452,8 +475,18 @@ class DeviceLockManager(private val context: Context) {
      */
     fun enforceHomeLauncherForCurrentState(): Boolean {
         val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
-        val isLocked = isDeviceLocked()
-        return enforceHomeLauncher(unpaidMode = !isPaidInFull && isLocked)
+        val isLockedFlag = isDeviceLocked()
+        val lockTaskActive = isLockTaskModeActive()
+
+        if (isLockedFlag && !lockTaskActive) {
+            // Stale flag can otherwise trap users on FONEX home unexpectedly.
+            setDeviceLockedFlag(false)
+            Log.w(TAG, "Cleared stale lock flag: lock task is not active")
+        }
+
+        return enforceHomeLauncher(
+            unpaidMode = !isPaidInFull && isLockedFlag && lockTaskActive,
+        )
     }
 
     /**

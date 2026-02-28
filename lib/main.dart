@@ -4084,6 +4084,38 @@ class SettingsScreen extends StatelessWidget {
                     );
                   },
                 ),
+                _buildSettingTile(
+                  icon: Icons.person_add_alt_1_rounded,
+                  title: 'Add Account',
+                  subtitle: 'Open Android account settings',
+                  onTap: () async {
+                    try {
+                      const channel = MethodChannel(_channelName);
+                      final opened =
+                          await channel.invokeMethod<bool>(
+                            'openAddAccountSettings',
+                          ) ??
+                          false;
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            opened
+                                ? 'Opening account settings...'
+                                : 'Unable to open account settings.',
+                          ),
+                        ),
+                      );
+                    } catch (_) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Failed to open account settings.'),
+                        ),
+                      );
+                    }
+                  },
+                ),
               ]),
             ],
           ),

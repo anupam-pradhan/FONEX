@@ -18,11 +18,12 @@ class BootReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED ||
-            intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED ||
-            intent.action == Intent.ACTION_MY_PACKAGE_REPLACED
+        val action = intent.action
+        if (action == Intent.ACTION_BOOT_COMPLETED ||
+            action == Intent.ACTION_LOCKED_BOOT_COMPLETED ||
+            action == Intent.ACTION_MY_PACKAGE_REPLACED
         ) {
-            Log.i(TAG, "System event received (${intent.action}) — restoring protection state")
+            Log.i(TAG, "System event received ($action) — restoring protection state")
 
             KeepAliveService.start(context)
             KeepAliveWatchdogWorker.schedule(context)
@@ -33,10 +34,18 @@ class BootReceiver : BroadcastReceiver() {
             FonexWarningWidgetProvider.updateAll(context)
 
             val isLocked = prefs.getBoolean(KEY_DEVICE_LOCKED, false)
+            val shouldLaunchUiAfterEvent =
+                action == Intent.ACTION_BOOT_COMPLETED ||
+                action == Intent.ACTION_LOCKED_BOOT_COMPLETED
 
-            if (isLocked) {
+            if (isLocked && shouldLaunchUiAfterEvent) {
                 Log.i(TAG, "Device is locked — launching FONEX to re-engage lock")
                 launchApp(context)
+            } else if (isLocked) {
+                Log.i(
+                    TAG,
+                    "Device is locked but skipping auto-launch for action=$action",
+                )
             } else {
                 Log.i(TAG, "Device is not locked — no action needed")
             }

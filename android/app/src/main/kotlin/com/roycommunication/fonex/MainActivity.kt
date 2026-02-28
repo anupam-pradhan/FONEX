@@ -93,10 +93,10 @@ class MainActivity : FlutterActivity() {
             val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
             val lastUnlockMs = prefs.getLong("last_unlock_ms", 0L)
             val msSinceUnlock = System.currentTimeMillis() - lastUnlockMs
-            if (deviceLockManager.isDeviceLocked() && msSinceUnlock > 30_000L) {
+            if (!paidInFull && deviceLockManager.isDeviceLocked() && msSinceUnlock > 30_000L) {
                 Log.i(TAG, "Device locked state detected — re-engaging lock")
                 deviceLockManager.enableDeviceLock(this)
-            } else if (deviceLockManager.isDeviceLocked() && msSinceUnlock <= 30_000L) {
+            } else if (deviceLockManager.isDeviceLocked() && (paidInFull || msSinceUnlock <= 30_000L)) {
                 Log.i(TAG, "Device locked flag found but recently unlocked — clearing stale flag")
                 deviceLockManager.setDeviceLockedFlag(false)
                 deviceLockManager.enforceHomeLauncherForCurrentState()
@@ -310,6 +310,10 @@ class MainActivity : FlutterActivity() {
 
                 "openAutoStartSettings" -> {
                     result.success(openAutoStartSettings())
+                }
+
+                "openAddAccountSettings" -> {
+                    result.success(openAddAccountSettings())
                 }
 
                 "showResetBlockedMessage" -> {
@@ -933,6 +937,25 @@ class MainActivity : FlutterActivity() {
                 return true
             } catch (_: Exception) {
                 // Try next intent candidate.
+            }
+        }
+        return false
+    }
+
+    private fun openAddAccountSettings(): Boolean {
+        val intents = listOf(
+            Intent(Settings.ACTION_ADD_ACCOUNT),
+            Intent(Settings.ACTION_SYNC_SETTINGS),
+            Intent(Settings.ACTION_SETTINGS),
+        )
+
+        for (intent in intents) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                return true
+            } catch (_: Exception) {
+                // Try next fallback.
             }
         }
         return false
