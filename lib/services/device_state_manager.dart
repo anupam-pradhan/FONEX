@@ -217,7 +217,12 @@ class DeviceStateManager {
 
       // Update persisted state
       final prefs = await SharedPreferences.getInstance();
-      final anchor = timerAnchor ?? DateTime.now();
+      final persistedAnchorMs = prefs.getInt('timer_anchor_ms');
+      final anchor =
+          timerAnchor ??
+          (persistedAnchorMs != null
+              ? DateTime.fromMillisecondsSinceEpoch(persistedAnchorMs)
+              : DateTime.now());
       await Future.wait([
         prefs.setBool(_keyPaidInFull, false),
         prefs.setBool(_keyDeviceLocked, false),

@@ -65,7 +65,7 @@ class MainActivity : FlutterActivity() {
         private const val WARNING_WALLPAPER_VERSION = 2
         private const val WARNING_WALLPAPER_REAPPLY_COOLDOWN_MS = 8_000L
         private const val REQUEST_CODE_POST_NOTIFICATIONS = 6013
-        private const val SUPPORT_STORE_NAME = "Roy Communication"
+        private const val SUPPORT_STORE_NAME = "Fonex Powerd By Roy Communication"
         private const val SUPPORT_PHONE_1 = "+91 8388855549"
         private const val SUPPORT_PHONE_2 = "+91 9635252455"
     }
@@ -327,6 +327,14 @@ class MainActivity : FlutterActivity() {
 
                 "openCreateGoogleAccount" -> {
                     result.success(openCreateGoogleAccount())
+                }
+
+                "openBackupSettings" -> {
+                    result.success(openBackupSettings())
+                }
+
+                "isGoogleBackupEnabled" -> {
+                    result.success(deviceLockManager.isGoogleBackupEnabled())
                 }
 
                 "showResetBlockedMessage" -> {
@@ -742,7 +750,7 @@ class MainActivity : FlutterActivity() {
         val bnLine2b = "বকেয়া দ্রুত পরিশোধ করুন।"
         val phoneLine1 = "Support: $SUPPORT_PHONE_1"
         val phoneLine2 = "Support: $SUPPORT_PHONE_2"
-        val poweredBy = "Powered by $SUPPORT_STORE_NAME"
+        val poweredBy = SUPPORT_STORE_NAME
 
         fitCenterText(titlePaint, titleText, 16f)
         fitCenterText(enPaint, enLine1, 14f)
@@ -977,6 +985,25 @@ class MainActivity : FlutterActivity() {
             Intent(Intent.ACTION_VIEW, Uri.parse("https://accounts.google.com/signup/v2/webcreateaccount")),
             Intent(Intent.ACTION_VIEW, Uri.parse("https://accounts.google.com/signup")),
             Intent(Settings.ACTION_ADD_ACCOUNT),
+        )
+
+        for (intent in intents) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                return true
+            } catch (_: Exception) {
+                // Try next fallback.
+            }
+        }
+        return false
+    }
+
+    private fun openBackupSettings(): Boolean {
+        val intents = listOf(
+            Intent("android.settings.BACKUP_AND_RESET_SETTINGS"),
+            Intent(Settings.ACTION_PRIVACY_SETTINGS),
+            Intent(Settings.ACTION_SETTINGS),
         )
 
         for (intent in intents) {

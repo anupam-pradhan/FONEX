@@ -20,6 +20,7 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
         private const val TAG = "FonexDeviceAdmin"
         private const val PREFS_NAME = "fonex_device_prefs"
         private const val KEY_DEVICE_LOCKED = "device_locked"
+        private const val SUPPORT_STORE_NAME = "Fonex Powerd By Roy Communication"
 
         fun getComponentName(context: Context): ComponentName {
             return ComponentName(context.applicationContext, MyDeviceAdminReceiver::class.java)
@@ -49,12 +50,12 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
             Log.w(TAG, "Admin disable requested — device is LOCKED, blocking.")
             Toast.makeText(
                 context,
-                "⚠️ Cannot remove FONEX admin — Please clear your due payment first and contact Roy Communication.",
+                "⚠️ Cannot remove FONEX admin — Please clear your due payment first and contact $SUPPORT_STORE_NAME.",
                 Toast.LENGTH_LONG
             ).show()
             // This message will be shown in the Android confirmation dialog
             "⚠️ Device payment is pending. You cannot remove FONEX Device Admin until your due payment is completed. " +
-            "Please visit Roy Communication to unlock this device."
+            "Please visit $SUPPORT_STORE_NAME to unlock this device."
         } else {
             Log.i(TAG, "Admin disable requested — device is unlocked, allowing.")
             "Are you sure you want to remove FONEX device management?"

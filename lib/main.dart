@@ -24,7 +24,7 @@ import 'services/reminder_settings.dart';
 // lacked device_id filtering, causing commands for other devices to execute
 // locally and every command to be processed twice.
 // =============================================================================
-// FONEX Powered by Roy Communication — Device Control System
+// FONEX Powerd By Roy Communication — Device Control System
 // =============================================================================
 // Production-ready device lock for mobile retail financing.
 // Uses Device Owner + DevicePolicyManager + Lock Task (no root, no Accessibility).
@@ -1413,6 +1413,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   }) async {
     try {
       final windowDays = days ?? _lockWindowDays;
+      final previousRemaining = _daysRemaining;
       final success = await DeviceStateManager().markAsEmiPending(
         windowDays: windowDays,
         timerAnchor: forceResetAnchor ? DateTime.now() : null,
@@ -1423,7 +1424,11 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           _isPaidInFull = false;
           _lockWindowDays = windowDays;
           if (!_isDeviceLocked) {
-            _daysRemaining = windowDays;
+            if (forceResetAnchor) {
+              _daysRemaining = windowDays;
+            } else {
+              _daysRemaining = previousRemaining.clamp(0, windowDays);
+            }
           }
         });
         AppLogger.log('Due amount mode activated: window=$windowDays days');
@@ -1789,15 +1794,20 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         final serverRemainingDays = _parseServerDays(
           response['days_remaining'],
         );
-        final serverDays = serverTenureDays ?? serverRemainingDays;
         if (serverPaidInFull && !_isPaidInFull) {
           await _activatePaidInFullMode(refreshOwnerState: true);
         } else if (!serverPaidInFull) {
-          // Only update EMI window when device is NOT locked.
-          // markAsEmiPending() clears device_locked flag, which would
-          // create a flag flicker while the device is actively locked.
-          if (!_isDeviceLocked) {
-            await _activateDueAmountMode(days: serverDays);
+          final wasPaidInFull = _isPaidInFull;
+          // Only update EMI mode when needed:
+          // - paid -> unpaid transition
+          // - explicit tenure window from server
+          // Never reuse days_remaining as tenure window.
+          if (!_isDeviceLocked &&
+              (wasPaidInFull || serverTenureDays != null)) {
+            await _activateDueAmountMode(
+              days: serverTenureDays,
+              forceResetAnchor: wasPaidInFull,
+            );
           }
           if (serverRemainingDays != null) {
             await _syncServerRemainingDays(serverRemainingDays);
@@ -2793,7 +2803,7 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Powered by Roy Communication',
+                        _storeName,
                         style: GoogleFonts.inter(
                           fontSize: 13,
                           color: FonexColors.textSecondary,
@@ -3252,18 +3262,21 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                                   vertical: 12,
                                 ),
                                 borderRadius: 14,
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(
-                                      'Device ID  ',
+                                      'Device ID',
+                                      textAlign: TextAlign.center,
                                       style: GoogleFonts.inter(
                                         fontSize: 12,
                                         color: FonexColors.textSecondary,
                                       ),
                                     ),
+                                    const SizedBox(height: 4),
                                     Text(
                                       _deviceHash,
+                                      textAlign: TextAlign.center,
                                       style: GoogleFonts.inter(
                                         fontSize: 18,
                                         fontWeight: FontWeight.w800,
@@ -4222,11 +4235,13 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
                     GlassCard(
                       padding: const EdgeInsets.all(24),
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           const FonexLogo(size: 64),
                           const SizedBox(height: 16),
                           Text(
                             'Device ID',
+                            textAlign: TextAlign.center,
                             style: GoogleFonts.inter(
                               fontSize: 14,
                               color: FonexColors.textSecondary,
@@ -4235,6 +4250,7 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
                           const SizedBox(height: 8),
                           Text(
                             _deviceHash,
+                            textAlign: TextAlign.center,
                             style: GoogleFonts.inter(
                               fontSize: 24,
                               fontWeight: FontWeight.w800,
@@ -4388,21 +4404,29 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
       child: GlassCard(
         padding: const EdgeInsets.all(16),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(
-              label,
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                color: FonexColors.textSecondary,
+            Expanded(
+              flex: 4,
+              child: Text(
+                label,
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  color: FonexColors.textSecondary,
+                ),
               ),
             ),
-            Text(
-              value,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: valueColor ?? FonexColors.textPrimary,
+            const SizedBox(width: 12),
+            Expanded(
+              flex: 5,
+              child: Text(
+                value,
+                textAlign: TextAlign.right,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: valueColor ?? FonexColors.textPrimary,
+                ),
               ),
             ),
           ],
@@ -4425,6 +4449,14 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   static const _channel = MethodChannel(_channelName);
   bool _isExporting = false;
+  bool _isCheckingBackup = true;
+  bool _isBackupEnabled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshBackupStatus());
+  }
 
   Future<void> _openAddAccountSettings() async {
     try {
@@ -4468,6 +4500,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SnackBar(
           content: Text('Failed to open Google account creation.'),
         ),
+      );
+    }
+  }
+
+  Future<void> _refreshBackupStatus() async {
+    try {
+      final enabled =
+          await _channel.invokeMethod<bool>('isGoogleBackupEnabled') ?? false;
+      if (!mounted) return;
+      setState(() {
+        _isBackupEnabled = enabled;
+        _isCheckingBackup = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isBackupEnabled = false;
+        _isCheckingBackup = false;
+      });
+    }
+  }
+
+  Future<void> _openBackupSettings() async {
+    try {
+      final opened =
+          await _channel.invokeMethod<bool>('openBackupSettings') ?? false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            opened
+                ? 'Opening backup settings...'
+                : 'Unable to open backup settings.',
+          ),
+        ),
+      );
+      if (opened) {
+        // Give settings UI a moment before re-checking status.
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) {
+            unawaited(_refreshBackupStatus());
+          }
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to open backup settings.')),
       );
     }
   }
@@ -4635,6 +4715,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   icon: Icons.store_rounded,
                   title: 'Store Information',
                   subtitle: _storeName,
+                ),
+              ]),
+              const SizedBox(height: 24),
+              _buildSettingsSection('Google Services', [
+                _buildSettingTile(
+                  icon: Icons.backup_rounded,
+                  title: 'Google Backup',
+                  subtitle: _isCheckingBackup
+                      ? 'Checking backup service...'
+                      : _isBackupEnabled
+                      ? 'Backup service is active'
+                      : 'Backup service is not active',
+                  onTap: _openBackupSettings,
+                ),
+                _buildSettingTile(
+                  icon: Icons.refresh_rounded,
+                  title: 'Refresh Backup Status',
+                  subtitle: 'Re-check Google backup service state',
+                  onTap: _refreshBackupStatus,
                 ),
               ]),
               const SizedBox(height: 24),
@@ -6512,6 +6611,7 @@ class _QRCodeScreenState extends State<QRCodeScreen> {
                               const SizedBox(height: 8),
                               Text(
                                 _deviceHash,
+                                textAlign: TextAlign.center,
                                 style: GoogleFonts.inter(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w800,
@@ -6526,6 +6626,7 @@ class _QRCodeScreenState extends State<QRCodeScreen> {
                       const SizedBox(height: 24),
                       Text(
                         'Device ID',
+                        textAlign: TextAlign.center,
                         style: GoogleFonts.inter(
                           fontSize: 14,
                           color: FonexColors.textSecondary,
@@ -6534,6 +6635,7 @@ class _QRCodeScreenState extends State<QRCodeScreen> {
                       const SizedBox(height: 8),
                       Text(
                         _deviceHash,
+                        textAlign: TextAlign.center,
                         style: GoogleFonts.inter(
                           fontSize: 24,
                           fontWeight: FontWeight.w800,

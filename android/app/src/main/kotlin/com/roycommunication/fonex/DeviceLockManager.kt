@@ -120,6 +120,7 @@ class DeviceLockManager(private val context: Context) {
             }
             // Keep personal Google account sign-in available.
             allowNormalGoogleAccounts()
+            setBackupServiceEnabledInternal(enabled = true)
             setWallpaperPickerAppsHidden(hidden = true)
 
             // Enforce automatic time to prevent local timer tampering
@@ -202,6 +203,7 @@ class DeviceLockManager(private val context: Context) {
             }
             setWallpaperPickerAppsHidden(hidden = !isPaidInFull)
             allowNormalGoogleAccounts(blockManagedProfile = !isPaidInFull)
+            setBackupServiceEnabledInternal(enabled = true)
             devicePolicyManager.setMaximumTimeToLock(adminComponent, 0L)
 
             // Exit immersive mode
@@ -391,6 +393,7 @@ class DeviceLockManager(private val context: Context) {
                 val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
                 // Ensure account login flow is not blocked by this DPC.
                 allowNormalGoogleAccounts(blockManagedProfile = !isPaidInFull)
+                setBackupServiceEnabledInternal(enabled = true)
                 if (!isPaidInFull) {
                     // Re-apply restrictions if not paid.
                     devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
@@ -547,12 +550,36 @@ class DeviceLockManager(private val context: Context) {
 
             setWallpaperPickerAppsHidden(hidden = false)
             allowNormalGoogleAccounts(blockManagedProfile = false)
+            setBackupServiceEnabledInternal(enabled = true)
             enforceHomeLauncher(unpaidMode = false)
 
             Log.i(TAG, "Paid-in-full policy applied: all lock restrictions cleared")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Failed to apply paid-in-full policy: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * Returns current backup service status if available.
+     * On Android 12+ uses DevicePolicyManager backup APIs.
+     * On older versions, checks secure setting backup_enabled when readable.
+     */
+    fun isGoogleBackupEnabled(): Boolean {
+        return try {
+            if (!isDeviceOwner()) return false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                devicePolicyManager.isBackupServiceEnabled(adminComponent)
+            } else {
+                Settings.Secure.getInt(
+                    context.contentResolver,
+                    "backup_enabled",
+                    1
+                ) == 1
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not read backup service state: ${e.message}")
             false
         }
     }
@@ -695,6 +722,37 @@ class DeviceLockManager(private val context: Context) {
         }
 
         Log.i(TAG, "Account sign-in policy applied for personal-device mode")
+    }
+
+    private fun setBackupServiceEnabledInternal(enabled: Boolean): Boolean {
+        if (!isDeviceOwner()) return false
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                devicePolicyManager.setBackupServiceEnabled(adminComponent, enabled)
+                val status = devicePolicyManager.isBackupServiceEnabled(adminComponent)
+                Log.i(TAG, "Google backup service status set: requested=$enabled actual=$status")
+                status == enabled
+            } else {
+                // Best effort on pre-Android 12 devices.
+                try {
+                    devicePolicyManager.setSecureSetting(
+                        adminComponent,
+                        "backup_enabled",
+                        if (enabled) "1" else "0"
+                    )
+                } catch (_: Exception) {
+                    Settings.Secure.putInt(
+                        context.contentResolver,
+                        "backup_enabled",
+                        if (enabled) 1 else 0
+                    )
+                }
+                true
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not update backup service state: ${e.message}")
+            false
+        }
     }
 
     private fun setWallpaperPickerAppsHidden(hidden: Boolean) {
