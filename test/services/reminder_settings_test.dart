@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fonex/main.dart';
+import 'package:fonex/services/reminder_settings.dart';
 
 void main() {
   group('ReminderSettings mapping', () {
@@ -42,4 +42,3 @@ void main() {
     });
   });
 }
-

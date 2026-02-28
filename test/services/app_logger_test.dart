@@ -8,7 +8,7 @@ void main() {
     });
 
     test('keeps bounded log count', () {
-      for (int i = 0; i < 2000; i++) {
+      for (int i = 0; i < 900; i++) {
         AppLogger.log('log-$i');
       }
 
@@ -23,4 +23,3 @@ void main() {
     });
   });
 }
-

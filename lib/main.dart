@@ -19,6 +19,7 @@ import 'services/realtime_command_service.dart';
 import 'services/sync_service.dart';
 import 'services/device_state_manager.dart';
 import 'services/crash_reporter.dart';
+import 'services/reminder_settings.dart';
 // SupabaseCommandListener removed: it duplicated RealtimeCommandService and
 // lacked device_id filtering, causing commands for other devices to execute
 // locally and every command to be processed twice.
@@ -51,10 +52,6 @@ const String _keyReminderLanguage = 'notif_reminder_language';
 const String _keySupportUnlockUntilMs = 'support_unlock_until_ms';
 const String _keyAntiKillAutoStartDone = 'antikill_autostart_done';
 const String _keyAntiKillBatteryDone = 'antikill_battery_done';
-
-enum ReminderProfile { balanced, frequent, minimal }
-
-enum ReminderLanguage { both, bn, en }
 
 // =============================================================================
 // DEVICE HASH UTILITY — Offline Algorithmic PIN Generation
@@ -101,52 +98,6 @@ class DeviceHashUtil {
     int hash = int.parse(deviceHash);
     int pin = (hash * 73 + 123456) % 1000000;
     return pin.toString().padLeft(6, '0');
-  }
-}
-
-class ReminderSettings {
-  static ReminderProfile profileFromRaw(String? value) {
-    switch (value) {
-      case 'frequent':
-        return ReminderProfile.frequent;
-      case 'minimal':
-        return ReminderProfile.minimal;
-      default:
-        return ReminderProfile.balanced;
-    }
-  }
-
-  static String profileToRaw(ReminderProfile profile) {
-    switch (profile) {
-      case ReminderProfile.frequent:
-        return 'frequent';
-      case ReminderProfile.minimal:
-        return 'minimal';
-      case ReminderProfile.balanced:
-        return 'balanced';
-    }
-  }
-
-  static ReminderLanguage languageFromRaw(String? value) {
-    switch (value) {
-      case 'bn':
-        return ReminderLanguage.bn;
-      case 'en':
-        return ReminderLanguage.en;
-      default:
-        return ReminderLanguage.both;
-    }
-  }
-
-  static String languageToRaw(ReminderLanguage language) {
-    switch (language) {
-      case ReminderLanguage.bn:
-        return 'bn';
-      case ReminderLanguage.en:
-        return 'en';
-      case ReminderLanguage.both:
-        return 'both';
-    }
   }
 }
 
