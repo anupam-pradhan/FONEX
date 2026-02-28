@@ -90,7 +90,14 @@ class DeviceLockManager(private val context: Context) {
             // Apply critical User Restrictions (Block Factory Reset, Safe Mode, ADB, etc.)
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_FACTORY_RESET)
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_SAFE_BOOT)
-            devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_DEBUGGING_FEATURES)
+            if (!BuildConfig.DEBUG) {
+                devicePolicyManager.addUserRestriction(
+                    adminComponent,
+                    UserManager.DISALLOW_DEBUGGING_FEATURES
+                )
+            } else {
+                Log.i(TAG, "Debug build: keeping USB debugging enabled while locked")
+            }
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_ADD_USER)
             // Prevent app uninstallation
             devicePolicyManager.addUserRestriction(adminComponent, UserManager.DISALLOW_UNINSTALL_APPS)
