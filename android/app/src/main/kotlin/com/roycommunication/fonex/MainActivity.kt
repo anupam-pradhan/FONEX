@@ -65,6 +65,8 @@ class MainActivity : FlutterActivity() {
         private const val WARNING_WALLPAPER_VERSION = 2
         private const val WARNING_WALLPAPER_REAPPLY_COOLDOWN_MS = 8_000L
         private const val REQUEST_CODE_POST_NOTIFICATIONS = 6013
+        private const val EXTRA_BACKGROUND_LOCK_ACTION = "fonex_background_lock_action"
+        private const val EXTRA_BACKGROUND_UNLOCK_ACTION = "fonex_background_unlock_action"
         private const val SUPPORT_STORE_NAME = "FONEX Powered by Roy Communication"
         private const val SUPPORT_PHONE_1 = "+91 8388855549"
         private const val SUPPORT_PHONE_2 = "+91 9635252455"
@@ -118,6 +120,13 @@ class MainActivity : FlutterActivity() {
         if (!paidInFull) {
             requestPinWarningWidgetIfSupported()
         }
+        handleBackgroundServiceActions(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleBackgroundServiceActions(intent)
     }
 
     override fun onResume() {
@@ -146,6 +155,41 @@ class MainActivity : FlutterActivity() {
             requestPinWarningWidgetIfSupported()
         }
         refreshHomeWarningWidget()
+    }
+
+    private fun handleBackgroundServiceActions(intent: Intent?) {
+        if (intent == null) return
+
+        val hasLockAction = intent.getBooleanExtra(EXTRA_BACKGROUND_LOCK_ACTION, false)
+        val hasUnlockAction = intent.getBooleanExtra(EXTRA_BACKGROUND_UNLOCK_ACTION, false)
+        if (!hasLockAction && !hasUnlockAction) return
+
+        // Clear one-shot flags to avoid repeated handling on activity recreation.
+        intent.removeExtra(EXTRA_BACKGROUND_LOCK_ACTION)
+        intent.removeExtra(EXTRA_BACKGROUND_UNLOCK_ACTION)
+
+        if (hasLockAction) {
+            if (!isPaidInFull() && deviceLockManager.isDeviceLocked()) {
+                val locked = deviceLockManager.enableDeviceLock(this)
+                Log.i(TAG, "Background lock cleanup handled. locked=$locked")
+            }
+            return
+        }
+
+        // Unlock cleanup path: ensure lock task is exited from Activity context.
+        try {
+            val unlocked = deviceLockManager.disableDeviceLock(this)
+            val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putLong("last_unlock_ms", System.currentTimeMillis()).apply()
+            deviceLockManager.setDeviceLockedFlag(false)
+            deviceLockManager.enforceHomeLauncherForCurrentState()
+            Log.i(TAG, "Background unlock cleanup handled. unlocked=$unlocked")
+        } catch (e: Exception) {
+            Log.w(TAG, "Background unlock cleanup failed: ${e.message}")
+        }
+
+        // Keep UX smooth: if app was auto-opened only for cleanup, move back.
+        moveTaskToBack(true)
     }
     
     override fun onDestroy() {

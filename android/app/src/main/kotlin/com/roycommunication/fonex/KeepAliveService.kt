@@ -41,6 +41,8 @@ class KeepAliveService : Service() {
         private const val PREFS_FLUTTER = "FlutterSharedPreferences"
         private const val KEY_PAID_IN_FULL = "is_paid_in_full"
         private const val KEY_LAST_UNLOCK_MS = "last_unlock_ms"
+        private const val EXTRA_BACKGROUND_LOCK_ACTION = "fonex_background_lock_action"
+        private const val EXTRA_BACKGROUND_UNLOCK_ACTION = "fonex_background_unlock_action"
         private const val SERVER_BASE_URL = "https://v0-fonex-backend-system-k6.vercel.app/api/v1/devices"
         private const val CHECKIN_PATH = "/checkin"
         private const val CHECKIN_INITIAL_DELAY_MS = 25_000L
@@ -245,6 +247,7 @@ class KeepAliveService : Service() {
         manager.setDeviceLockedFlag(false)
         prefs.edit().putLong(KEY_LAST_UNLOCK_MS, System.currentTimeMillis()).apply()
         manager.enforceHomeLauncher(unpaidMode = false)
+        launchAppForUnlockCleanup()
         Log.i(TAG, "Fallback unlock action applied in keep-alive service")
     }
 
@@ -258,10 +261,27 @@ class KeepAliveService : Service() {
                     Intent.FLAG_ACTIVITY_CLEAR_TOP or
                     Intent.FLAG_ACTIVITY_SINGLE_TOP,
             )
-            launchIntent.putExtra("fonex_background_lock_action", true)
+            launchIntent.putExtra(EXTRA_BACKGROUND_LOCK_ACTION, true)
             startActivity(launchIntent)
         } catch (e: Exception) {
             Log.w(TAG, "Could not launch app for fallback lock: ${e.message}")
+        }
+    }
+
+    private fun launchAppForUnlockCleanup() {
+        try {
+            val launchIntent =
+                packageManager.getLaunchIntentForPackage(packageName)
+                    ?: Intent(this, MainActivity::class.java)
+            launchIntent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
+            launchIntent.putExtra(EXTRA_BACKGROUND_UNLOCK_ACTION, true)
+            startActivity(launchIntent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not launch app for fallback unlock cleanup: ${e.message}")
         }
     }
 

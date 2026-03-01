@@ -3246,8 +3246,11 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                                 _poweredByLine(widget.storeName),
                                 style: GoogleFonts.inter(
                                   fontSize: 12,
-                                  color: FonexColors.textSecondary,
-                                  letterSpacing: 2,
+                                  fontWeight: FontWeight.w600,
+                                  color: FonexColors.textPrimary.withValues(
+                                    alpha: 0.92,
+                                  ),
+                                  letterSpacing: 0.4,
                                 ),
                                 textAlign: TextAlign.center,
                                 maxLines: 2,
@@ -3795,6 +3798,7 @@ class OwnerPinScreen extends StatefulWidget {
 class _OwnerPinScreenState extends State<OwnerPinScreen>
     with SingleTickerProviderStateMixin {
   static const _channel = MethodChannel(_channelName);
+  static const int _pinDigits = 6;
 
   final _pinController = TextEditingController();
   late AnimationController _shakeController;
@@ -4028,6 +4032,14 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                                   color: FonexColors.textSecondary,
                                 ),
                               ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Use 6-digit device PIN or owner PIN',
+                                style: GoogleFonts.inter(
+                                  fontSize: 11,
+                                  color: FonexColors.textMuted,
+                                ),
+                              ),
 
                               const SizedBox(height: 36),
 
@@ -4044,7 +4056,7 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                                 },
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
-                                  children: List.generate(6, (i) {
+                                  children: List.generate(_pinDigits, (i) {
                                     final isFilled = i < _currentPin.length;
                                     return AnimatedContainer(
                                       duration: const Duration(
@@ -4094,9 +4106,13 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                                   controller: _pinController,
                                   keyboardType: TextInputType.number,
                                   obscureText: _obscurePin,
+                                  obscuringCharacter: '●',
                                   enabled: !_isCooldown,
                                   textAlign: TextAlign.center,
-                                  maxLength: 6,
+                                  maxLength: _pinDigits,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
                                   style: GoogleFonts.inter(
                                     fontSize: 28,
                                     fontWeight: FontWeight.w700,
@@ -4104,7 +4120,7 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                                     letterSpacing: 12,
                                   ),
                                   decoration: InputDecoration(
-                                    hintText: '• • • •',
+                                    hintText: '• • • • • •',
                                     hintStyle: GoogleFonts.inter(
                                       fontSize: 24,
                                       color: FonexColors.textMuted,
@@ -4255,7 +4271,7 @@ class _OwnerPinScreenState extends State<OwnerPinScreen>
                               const SizedBox(height: 40),
 
                               Text(
-                                'Default PIN: 1234',
+                                'Default owner PIN: 1234',
                                 style: GoogleFonts.inter(
                                   fontSize: 11,
                                   color: FonexColors.textMuted.withValues(
