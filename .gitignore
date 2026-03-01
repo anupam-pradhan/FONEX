@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local signing secrets (do not commit)
+# /android/key.properties
+# /SIGNING_PRIVATE_NOTE.md
