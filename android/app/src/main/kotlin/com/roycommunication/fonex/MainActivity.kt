@@ -356,6 +356,10 @@ class MainActivity : FlutterActivity() {
                     result.success(deviceLockManager.isUninstallBlocked())
                 }
 
+                "isPaidInFull" -> {
+                    result.success(isPaidInFull())
+                }
+
                 "setPaidInFull" -> {
                     val paid = call.argument<Boolean>("paid") ?: false
                     val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
