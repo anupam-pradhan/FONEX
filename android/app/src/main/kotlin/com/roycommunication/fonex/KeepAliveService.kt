@@ -1,5 +1,6 @@
 package com.roycommunication.fonex
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,13 +10,25 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.telephony.TelephonyManager
 import android.util.Log
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Timer
+import java.util.TimerTask
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Foreground keep-alive service to reduce OEM background process kills.
- * This service does not poll commands; it only keeps the process healthy.
+ * Also runs a lightweight legacy check-in fallback so lock/unlock actions
+ * can still be applied when Flutter realtime is not active.
  */
 class KeepAliveService : Service() {
 
@@ -24,6 +37,14 @@ class KeepAliveService : Service() {
         private const val CHANNEL_ID = "fonex_keepalive_channel"
         private const val CHANNEL_NAME = "FONEX Protection"
         private const val NOTIFICATION_ID = 2207
+        private const val PREFS_DEVICE = "fonex_device_prefs"
+        private const val PREFS_FLUTTER = "FlutterSharedPreferences"
+        private const val KEY_PAID_IN_FULL = "is_paid_in_full"
+        private const val KEY_LAST_UNLOCK_MS = "last_unlock_ms"
+        private const val SERVER_BASE_URL = "https://v0-fonex-backend-system-k6.vercel.app/api/v1/devices"
+        private const val CHECKIN_PATH = "/checkin"
+        private const val CHECKIN_INITIAL_DELAY_MS = 25_000L
+        private const val CHECKIN_INTERVAL_MS = 2 * 60_000L
 
         fun start(context: Context) {
             val intent = Intent(context, KeepAliveService::class.java)
@@ -31,15 +52,26 @@ class KeepAliveService : Service() {
         }
     }
 
+    private var checkInTimer: Timer? = null
+    private val checkInInFlight = AtomicBoolean(false)
+
     override fun onCreate() {
         super.onCreate()
         startForeground(NOTIFICATION_ID, buildNotification())
         reEnforcePolicies()
+        scheduleLegacyCheckInFallback()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         reEnforcePolicies()
+        triggerLegacyCheckIn()
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        checkInTimer?.cancel()
+        checkInTimer = null
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -87,13 +119,222 @@ class KeepAliveService : Service() {
         try {
             val manager = DeviceLockManager(applicationContext)
             if (!manager.isDeviceOwner()) return
-            val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
-            val isPaidInFull = prefs.getBoolean("is_paid_in_full", false)
+            val prefs = applicationContext.getSharedPreferences(PREFS_DEVICE, Context.MODE_PRIVATE)
+            val isPaidInFull = prefs.getBoolean(KEY_PAID_IN_FULL, false)
             manager.enforceFactoryResetBlock()
             manager.enforceHomeLauncherForCurrentState()
             Log.i(TAG, "Policies re-enforced from keep-alive service. paidInFull=$isPaidInFull")
         } catch (e: Exception) {
             Log.w(TAG, "Policy re-enforcement failed: ${e.message}")
+        }
+    }
+
+    private fun scheduleLegacyCheckInFallback() {
+        checkInTimer?.cancel()
+        checkInTimer = Timer("fonex-legacy-checkin", true).apply {
+            scheduleAtFixedRate(
+                object : TimerTask() {
+                    override fun run() {
+                        triggerLegacyCheckIn()
+                    }
+                },
+                CHECKIN_INITIAL_DELAY_MS,
+                CHECKIN_INTERVAL_MS,
+            )
+        }
+    }
+
+    private fun triggerLegacyCheckIn() {
+        if (!checkInInFlight.compareAndSet(false, true)) return
+        Thread {
+            try {
+                performLegacyCheckIn()
+            } finally {
+                checkInInFlight.set(false)
+            }
+        }.start()
+    }
+
+    private fun performLegacyCheckIn() {
+        val manager = DeviceLockManager(applicationContext)
+        if (!manager.isDeviceOwner()) return
+
+        val deviceId = resolveDeviceId() ?: run {
+            Log.w(TAG, "Legacy check-in skipped: missing local device id/hash")
+            return
+        }
+
+        val imei = resolveImei()
+        val payload = JSONObject().apply {
+            put("device_hash", deviceId)
+            put("device_id", deviceId)
+            put("imei", imei)
+            put("is_locked", manager.isDeviceLocked())
+            put("last_seen", java.time.Instant.now().toString())
+            put("timestamp", java.time.Instant.now().toString())
+        }
+
+        val endpoint = "$SERVER_BASE_URL$CHECKIN_PATH"
+        val (statusCode, body) = postJson(endpoint, payload.toString()) ?: return
+        Log.i(TAG, "Legacy check-in response: status=$statusCode body=$body")
+        if (statusCode !in 200..299 || body.isBlank()) return
+
+        val response = try {
+            JSONObject(body)
+        } catch (e: Exception) {
+            Log.w(TAG, "Legacy check-in parse failed: ${e.message}")
+            return
+        }
+
+        applyPaidStateFromServer(response, manager)
+        val action = response.optString("action", "none").trim().lowercase()
+        when (action) {
+            "lock" -> handleLockActionFromFallback(manager)
+            "unlock" -> handleUnlockActionFromFallback(manager)
+            else -> Unit
+        }
+    }
+
+    private fun applyPaidStateFromServer(response: JSONObject, manager: DeviceLockManager) {
+        val paymentStatus = response.optString("payment_status", "").trim().lowercase()
+        val paidByStatus = paymentStatus in setOf(
+            "paid",
+            "paid_in_full",
+            "full_paid",
+            "completed",
+            "settled",
+        )
+        val paid = response.optBoolean("is_paid_in_full", false) ||
+            response.optBoolean("paid_in_full", false) ||
+            paidByStatus
+
+        val prefs = applicationContext.getSharedPreferences(PREFS_DEVICE, Context.MODE_PRIVATE)
+        val currentPaid = prefs.getBoolean(KEY_PAID_IN_FULL, false)
+        if (paid != currentPaid) {
+            prefs.edit().putBoolean(KEY_PAID_IN_FULL, paid).apply()
+            if (paid) {
+                manager.enforcePaidInFullState(activity = null)
+            } else {
+                manager.enforceFactoryResetBlock()
+            }
+            Log.i(TAG, "Legacy check-in paid state synced: paidInFull=$paid")
+        }
+    }
+
+    private fun handleLockActionFromFallback(manager: DeviceLockManager) {
+        val prefs = applicationContext.getSharedPreferences(PREFS_DEVICE, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_PAID_IN_FULL, false)) {
+            Log.i(TAG, "Ignoring fallback lock action: device marked paid in full")
+            return
+        }
+        if (manager.isDeviceLocked()) return
+
+        manager.setDeviceLockedFlag(true)
+        manager.enforceFactoryResetBlock()
+        manager.enforceHomeLauncher(unpaidMode = true)
+        manager.lockScreenNow()
+        launchAppForImmediateLockUi()
+        Log.i(TAG, "Fallback lock action applied in keep-alive service")
+    }
+
+    private fun handleUnlockActionFromFallback(manager: DeviceLockManager) {
+        val prefs = applicationContext.getSharedPreferences(PREFS_DEVICE, Context.MODE_PRIVATE)
+        val wasLocked = manager.isDeviceLocked()
+        if (!wasLocked) return
+
+        manager.setDeviceLockedFlag(false)
+        prefs.edit().putLong(KEY_LAST_UNLOCK_MS, System.currentTimeMillis()).apply()
+        manager.enforceHomeLauncher(unpaidMode = false)
+        Log.i(TAG, "Fallback unlock action applied in keep-alive service")
+    }
+
+    private fun launchAppForImmediateLockUi() {
+        try {
+            val launchIntent =
+                packageManager.getLaunchIntentForPackage(packageName)
+                    ?: Intent(this, MainActivity::class.java)
+            launchIntent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
+            launchIntent.putExtra("fonex_background_lock_action", true)
+            startActivity(launchIntent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not launch app for fallback lock: ${e.message}")
+        }
+    }
+
+    private fun resolveDeviceId(): String? {
+        val flutterPrefs = applicationContext.getSharedPreferences(PREFS_FLUTTER, Context.MODE_PRIVATE)
+        val candidates = listOf(
+            "flutter.device_hash_stored",
+            "flutter.device_hash_stable",
+            "device_hash_stored",
+            "device_hash_stable",
+        )
+        for (key in candidates) {
+            val value = flutterPrefs.getString(key, null)?.trim()
+            if (!value.isNullOrEmpty()) return value
+        }
+        return null
+    }
+
+    private fun resolveImei(): String {
+        return try {
+            val granted = ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_PHONE_STATE,
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted) return "Not Found"
+
+            val tm = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                tm.imei ?: "Not Found"
+            } else {
+                @Suppress("DEPRECATION")
+                tm.deviceId ?: "Not Found"
+            }
+        } catch (_: Exception) {
+            "Not Found"
+        }
+    }
+
+    private fun postJson(endpoint: String, jsonBody: String): Pair<Int, String>? {
+        var connection: HttpURLConnection? = null
+        return try {
+            val url = URL(endpoint)
+            connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 8_000
+                readTimeout = 8_000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("User-Agent", "FONEX-KeepAlive/1.0")
+            }
+
+            OutputStreamWriter(connection.outputStream).use { writer ->
+                writer.write(jsonBody)
+                writer.flush()
+            }
+
+            val status = connection.responseCode
+            val stream = if (status in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream
+            }
+            val body = if (stream != null) {
+                BufferedReader(InputStreamReader(stream)).use { it.readText() }
+            } else {
+                ""
+            }
+            status to body
+        } catch (e: Exception) {
+            Log.w(TAG, "Legacy check-in request failed: ${e.message}")
+            null
+        } finally {
+            connection?.disconnect()
         }
     }
 }

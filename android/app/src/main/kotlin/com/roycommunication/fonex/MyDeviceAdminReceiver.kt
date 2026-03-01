@@ -20,7 +20,7 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
         private const val TAG = "FonexDeviceAdmin"
         private const val PREFS_NAME = "fonex_device_prefs"
         private const val KEY_DEVICE_LOCKED = "device_locked"
-        private const val SUPPORT_STORE_NAME = "Fonex Powerd By Roy Communication"
+        private const val SUPPORT_STORE_NAME = "FONEX Powered by Roy Communication"
 
         fun getComponentName(context: Context): ComponentName {
             return ComponentName(context.applicationContext, MyDeviceAdminReceiver::class.java)

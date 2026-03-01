@@ -24,7 +24,7 @@ import 'services/reminder_settings.dart';
 // lacked device_id filtering, causing commands for other devices to execute
 // locally and every command to be processed twice.
 // =============================================================================
-// FONEX Powerd By Roy Communication — Device Control System
+// FONEX Powered by Roy Communication — Device Control System
 // =============================================================================
 // Production-ready device lock for mobile retail financing.
 // Uses Device Owner + DevicePolicyManager + Lock Task (no root, no Accessibility).
@@ -49,6 +49,8 @@ const String _storeName = FonexConfig.storeName;
 const String _keyReminderEnabled = 'notif_reminder_enabled';
 const String _keyReminderProfile = 'notif_reminder_profile';
 const String _keyReminderLanguage = 'notif_reminder_language';
+const String _keyLastNotifSignature = 'last_notif_signature';
+const String _keyLastNotifMs = 'last_notif_ms';
 const String _keySupportUnlockUntilMs = 'support_unlock_until_ms';
 const String _keyAntiKillAutoStartDone = 'antikill_autostart_done';
 const String _keyAntiKillBatteryDone = 'antikill_battery_done';
@@ -806,12 +808,6 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           _backgroundHeartbeatTicks = 0;
         }
 
-        // Background guardrail: run heavy heartbeat every 5 minutes.
-        if (!_isAppInForeground && (_backgroundHeartbeatTicks % 5) != 0) {
-          RealtimeCommandService().ensureConnected();
-          return;
-        }
-
         RealtimeCommandService().ensureConnected();
         if (!_isAppInForeground) {
           unawaited(RealtimeCommandService().retryPendingAcks(maxItems: 2));
@@ -823,12 +819,15 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
         final realtimeHealthy = RealtimeCommandService().isSubscribed;
         final lastSync = _lastServerSync;
-        final minutesSinceLastSync = lastSync == null
+        final requiredIntervalMinutes = _isAppInForeground
             ? FonexConfig.serverCheckInIntervalMinutes
+            : 1;
+        final minutesSinceLastSync = lastSync == null
+            ? requiredIntervalMinutes
             : DateTime.now().difference(lastSync).inMinutes;
         final shouldCheckNow =
             !realtimeHealthy ||
-            minutesSinceLastSync >= FonexConfig.serverCheckInIntervalMinutes;
+            minutesSinceLastSync >= requiredIntervalMinutes;
         if (shouldCheckNow) {
           unawaited(_serverCheckIn());
         }
@@ -1386,9 +1385,20 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
   }
 
+  Future<void> _clearReminderState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await Future.wait([
+      prefs.remove(_keyReminder30Date),
+      prefs.remove(_keyReminderSundayDate),
+      prefs.remove(_keyReminderThreeDaysMs),
+      prefs.remove(_keyReminderOneDayMs),
+    ]);
+  }
+
   Future<void> _activatePaidInFullMode({bool refreshOwnerState = false}) async {
+    bool success = false;
     try {
-      final success = await DeviceStateManager().markPaidInFull();
+      success = await DeviceStateManager().markPaidInFull();
       if (success && mounted) {
         setState(() {
           _isPaidInFull = true;
@@ -1399,6 +1409,21 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       }
     } catch (e) {
       AppLogger.log('Error activating paid in full mode: $e');
+    }
+
+    // Always sync local reminder/payment state from server intent, even if
+    // native policy call fails. This prevents stale EMI reminders.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('is_paid_in_full', true);
+    await _clearReminderState();
+    if (!success && mounted) {
+      setState(() {
+        _isPaidInFull = true;
+        _isDeviceLocked = false;
+      });
+      AppLogger.log(
+        'Paid-in-full fallback applied locally after native failure.',
+      );
     }
 
     if (refreshOwnerState) {
@@ -1615,8 +1640,32 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
 
   /// Show a notification for a command/action via native channel
   void _showCommandNotification(String title, String body) {
+    unawaited(_showCommandNotificationInternal(title, body));
+  }
+
+  Future<void> _showCommandNotificationInternal(
+    String title,
+    String body, {
+    Duration dedupeWindow = const Duration(minutes: 30),
+  }) async {
     try {
-      _channel.invokeMethod('showCommandNotification', {
+      final normalizedSignature =
+          '${title.trim().toLowerCase()}|${body.trim().toLowerCase()}';
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final prefs = await SharedPreferences.getInstance();
+      final lastSignature = prefs.getString(_keyLastNotifSignature);
+      final lastMs = prefs.getInt(_keyLastNotifMs) ?? 0;
+      if (lastSignature == normalizedSignature &&
+          (nowMs - lastMs) < dedupeWindow.inMilliseconds) {
+        AppLogger.log(
+          'Notification deduped: title="$title" body="$body"',
+        );
+        return;
+      }
+
+      await prefs.setString(_keyLastNotifSignature, normalizedSignature);
+      await prefs.setInt(_keyLastNotifMs, nowMs);
+      await _channel.invokeMethod('showCommandNotification', {
         'title': title,
         'body': body,
       });
@@ -1780,10 +1829,21 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           });
         }
 
+        final paymentStatus = response['payment_status']
+            ?.toString()
+            .toLowerCase()
+            .trim();
+        final paidStatuses = <String>{
+          'paid',
+          'paid_in_full',
+          'full_paid',
+          'completed',
+          'settled',
+        };
         final serverPaidInFull =
             response['is_paid_in_full'] == true ||
             response['paid_in_full'] == true ||
-            (response['payment_status']?.toString().toLowerCase() == 'paid');
+            (paymentStatus != null && paidStatuses.contains(paymentStatus));
         final serverLocked =
             response['is_locked'] == true ||
             response['locked'] == true ||
@@ -3059,6 +3119,20 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
     });
   }
 
+  String _poweredByLine(String rawStoreName) {
+    final cleaned = rawStoreName.trim().replaceAll(
+      RegExp(r'\bpowerd\b', caseSensitive: false),
+      'Powered',
+    );
+    if (cleaned.isEmpty) {
+      return 'FONEX Powered by Roy Communication';
+    }
+    if (RegExp(r'\bpowered\s+by\b', caseSensitive: false).hasMatch(cleaned)) {
+      return cleaned;
+    }
+    return 'Powered by $cleaned';
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -3169,12 +3243,15 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'Powered by ${widget.storeName}',
+                                _poweredByLine(widget.storeName),
                                 style: GoogleFonts.inter(
                                   fontSize: 12,
                                   color: FonexColors.textSecondary,
                                   letterSpacing: 2,
                                 ),
+                                textAlign: TextAlign.center,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
                               ),
 
                               const SizedBox(height: 40),

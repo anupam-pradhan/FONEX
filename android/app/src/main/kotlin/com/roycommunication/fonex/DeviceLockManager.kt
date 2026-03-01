@@ -446,6 +446,13 @@ class DeviceLockManager(private val context: Context) {
             // During debug/testing, do not force FONEX as HOME launcher.
             // This avoids trapping navigation while validating command flows.
             if (isDebuggableBuild()) {
+                // Also clear user-level preferred HOME selection for this package.
+                // Without this, pressing Home can continue reopening FONEX in debug.
+                try {
+                    context.packageManager.clearPackagePreferredActivities(context.packageName)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not clear preferred home activities (debug): ${e.message}")
+                }
                 Log.i(TAG, "Debug build: skipping persistent HOME launcher enforcement")
                 return true
             }
@@ -463,6 +470,13 @@ class DeviceLockManager(private val context: Context) {
                 )
                 Log.i(TAG, "Persistent HOME launcher enforced for unpaid mode")
             } else {
+                // Clear user-level preferred HOME selection when unlocked/paid so
+                // Android launcher choice returns to normal behavior.
+                try {
+                    context.packageManager.clearPackagePreferredActivities(context.packageName)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not clear preferred home activities: ${e.message}")
+                }
                 Log.i(TAG, "Persistent HOME launcher cleared (paid mode)")
             }
             true

@@ -65,7 +65,7 @@ class MainActivity : FlutterActivity() {
         private const val WARNING_WALLPAPER_VERSION = 2
         private const val WARNING_WALLPAPER_REAPPLY_COOLDOWN_MS = 8_000L
         private const val REQUEST_CODE_POST_NOTIFICATIONS = 6013
-        private const val SUPPORT_STORE_NAME = "Fonex Powerd By Roy Communication"
+        private const val SUPPORT_STORE_NAME = "FONEX Powered by Roy Communication"
         private const val SUPPORT_PHONE_1 = "+91 8388855549"
         private const val SUPPORT_PHONE_2 = "+91 9635252455"
     }
@@ -684,7 +684,7 @@ class MainActivity : FlutterActivity() {
 
         val width = bitmap.width.toFloat()
         val height = bitmap.height.toFloat()
-        canvas.drawColor(Color.WHITE)
+        canvas.drawColor(Color.rgb(245, 248, 252))
 
         val margin = (width * 0.08f).coerceIn(28f, 84f)
         val contentWidth = width - (margin * 2)
@@ -694,6 +694,25 @@ class MainActivity : FlutterActivity() {
             color = Color.argb(255, 23, 62, 124)
         }
         canvas.drawRect(0f, 0f, width, (height * 0.02f).coerceAtLeast(14f), accentPaint)
+
+        // Dark top shade to keep launcher clock/time readable on light wallpapers.
+        val topShadeHeight = (height * 0.22f).coerceIn(150f, 420f)
+        val topShade = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = LinearGradient(
+                0f,
+                0f,
+                0f,
+                topShadeHeight,
+                intArrayOf(
+                    Color.argb(155, 10, 18, 33),
+                    Color.argb(72, 10, 18, 33),
+                    Color.argb(0, 10, 18, 33),
+                ),
+                null,
+                Shader.TileMode.CLAMP,
+            )
+        }
+        canvas.drawRect(0f, 0f, width, topShadeHeight, topShade)
 
         val logoSize = (width * 0.22f).coerceIn(96f, 220f)
         val logoTop = (height * 0.08f).coerceIn(48f, 160f)
