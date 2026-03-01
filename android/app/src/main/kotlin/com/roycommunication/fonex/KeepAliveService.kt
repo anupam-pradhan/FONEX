@@ -41,6 +41,8 @@ class KeepAliveService : Service() {
         private const val PREFS_FLUTTER = "FlutterSharedPreferences"
         private const val KEY_PAID_IN_FULL = "is_paid_in_full"
         private const val KEY_LAST_UNLOCK_MS = "last_unlock_ms"
+        private const val KEY_DEVICE_HASH_STORED = "device_hash_stored"
+        private const val KEY_REALTIME_DEVICE_ID = "realtime_device_id"
         private const val EXTRA_BACKGROUND_LOCK_ACTION = "fonex_background_lock_action"
         private const val EXTRA_BACKGROUND_UNLOCK_ACTION = "fonex_background_unlock_action"
         private const val SERVER_BASE_URL = "https://v0-fonex-backend-system-k6.vercel.app/api/v1/devices"
@@ -56,6 +58,10 @@ class KeepAliveService : Service() {
 
     private var checkInTimer: Timer? = null
     private val checkInInFlight = AtomicBoolean(false)
+    private data class DeviceIdentifiers(
+        val deviceHash: String,
+        val deviceId: String,
+    )
 
     override fun onCreate() {
         super.onCreate()
@@ -161,20 +167,24 @@ class KeepAliveService : Service() {
         val manager = DeviceLockManager(applicationContext)
         if (!manager.isDeviceOwner()) return
 
-        val deviceId = resolveDeviceId() ?: run {
-            Log.w(TAG, "Legacy check-in skipped: missing local device id/hash")
+        val identifiers = resolveDeviceIdentifiers() ?: run {
+            Log.w(TAG, "Legacy check-in skipped: missing local device hash/id")
             return
         }
 
         val imei = resolveImei()
         val payload = JSONObject().apply {
-            put("device_hash", deviceId)
-            put("device_id", deviceId)
+            put("device_hash", identifiers.deviceHash)
+            put("device_id", identifiers.deviceId)
             put("imei", imei)
             put("is_locked", manager.isDeviceLocked())
             put("last_seen", java.time.Instant.now().toString())
             put("timestamp", java.time.Instant.now().toString())
         }
+        Log.i(
+            TAG,
+            "Legacy check-in payload identifiers: hash=${identifiers.deviceHash} id=${identifiers.deviceId}",
+        )
 
         val endpoint = "$SERVER_BASE_URL$CHECKIN_PATH"
         val (statusCode, body) = postJson(endpoint, payload.toString()) ?: return
@@ -285,19 +295,34 @@ class KeepAliveService : Service() {
         }
     }
 
-    private fun resolveDeviceId(): String? {
+    private fun resolveDeviceIdentifiers(): DeviceIdentifiers? {
+        val nativePrefs = applicationContext.getSharedPreferences(PREFS_DEVICE, Context.MODE_PRIVATE)
         val flutterPrefs = applicationContext.getSharedPreferences(PREFS_FLUTTER, Context.MODE_PRIVATE)
-        val candidates = listOf(
-            "flutter.device_hash_stored",
-            "flutter.device_hash_stable",
-            "device_hash_stored",
-            "device_hash_stable",
+        val hashCandidates = listOf(
+            nativePrefs.getString(KEY_DEVICE_HASH_STORED, null),
+            flutterPrefs.getString("flutter.device_hash_stored", null),
+            flutterPrefs.getString("flutter.device_hash_stable", null),
+            flutterPrefs.getString("device_hash_stored", null),
+            flutterPrefs.getString("device_hash_stable", null),
         )
-        for (key in candidates) {
-            val value = flutterPrefs.getString(key, null)?.trim()
-            if (!value.isNullOrEmpty()) return value
-        }
-        return null
+        val deviceHash = hashCandidates
+            .mapNotNull { it?.trim() }
+            .firstOrNull { it.isNotEmpty() }
+            ?: return null
+
+        val idCandidates = listOf(
+            nativePrefs.getString(KEY_REALTIME_DEVICE_ID, null),
+            flutterPrefs.getString("flutter.realtime_device_id", null),
+            flutterPrefs.getString("flutter.device_id", null),
+            flutterPrefs.getString("realtime_device_id", null),
+            flutterPrefs.getString("device_id", null),
+        )
+        val deviceId = idCandidates
+            .mapNotNull { it?.trim() }
+            .firstOrNull { it.isNotEmpty() }
+            ?: deviceHash
+
+        return DeviceIdentifiers(deviceHash = deviceHash, deviceId = deviceId)
     }
 
     private fun resolveImei(): String {

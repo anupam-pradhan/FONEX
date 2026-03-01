@@ -67,6 +67,8 @@ class MainActivity : FlutterActivity() {
         private const val REQUEST_CODE_POST_NOTIFICATIONS = 6013
         private const val EXTRA_BACKGROUND_LOCK_ACTION = "fonex_background_lock_action"
         private const val EXTRA_BACKGROUND_UNLOCK_ACTION = "fonex_background_unlock_action"
+        private const val KEY_DEVICE_HASH_STORED = "device_hash_stored"
+        private const val KEY_REALTIME_DEVICE_ID = "realtime_device_id"
         private const val SUPPORT_STORE_NAME = "FONEX Powered by Roy Communication"
         private const val SUPPORT_PHONE_1 = "+91 8388855549"
         private const val SUPPORT_PHONE_2 = "+91 9635252455"
@@ -289,6 +291,17 @@ class MainActivity : FlutterActivity() {
                     val locked = call.argument<Boolean>("locked") ?: false
                     deviceLockManager.setDeviceLockedFlag(locked)
                     result.success(true)
+                }
+
+                "setDeviceIdentifiers" -> {
+                    val deviceHash = call.argument<String>("device_hash")?.trim().orEmpty()
+                    val deviceId = call.argument<String>("device_id")?.trim().orEmpty()
+                    if (deviceHash.isEmpty()) {
+                        result.error("INVALID_DEVICE_HASH", "device_hash is required", null)
+                    } else {
+                        saveDeviceIdentifiers(deviceHash, deviceId.ifEmpty { deviceHash })
+                        result.success(true)
+                    }
                 }
 
                 "validatePin" -> {
@@ -521,6 +534,19 @@ class MainActivity : FlutterActivity() {
             Log.i(TAG, "Command notification shown: $title")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show command notification: ${e.message}", e)
+        }
+    }
+
+    private fun saveDeviceIdentifiers(deviceHash: String, deviceId: String) {
+        try {
+            val prefs = applicationContext.getSharedPreferences("fonex_device_prefs", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putString(KEY_DEVICE_HASH_STORED, deviceHash)
+                .putString(KEY_REALTIME_DEVICE_ID, deviceId)
+                .apply()
+            Log.i(TAG, "Stored native device identifiers: hash=$deviceHash id=$deviceId")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to store native device identifiers: ${e.message}")
         }
     }
 

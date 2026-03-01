@@ -46,7 +46,7 @@ class FonexConfig {
   // ===========================================================================
 
   /// Store name (displayed on wallpaper and lock screen)
-  static const String storeName = 'Fonex Powerd By Roy Communication';
+  static const String storeName = 'Fonex Powered By Roy Communication';
 
   /// Store address (optional, for display)
   static const String storeAddress =

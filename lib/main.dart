@@ -950,6 +950,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     unawaited(_ensureBackgroundKillProtection(allowUserPrompt: true));
     _deviceHash = await DeviceHashUtil.getDeviceHash();
     _realtimeDeviceId = _deviceHash;
+    unawaited(_syncNativeDeviceIdentifiers());
     await _startRealtimeListener();
     if (!_isPaidInFull) {
       await _checkTimerAndLock();
@@ -958,6 +959,26 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     // Attempt server check-in (non-blocking, offline-safe)
     unawaited(_serverCheckIn());
     if (mounted) setState(() => _isLoading = false);
+  }
+
+  Future<void> _syncNativeDeviceIdentifiers() async {
+    final deviceHash = _deviceHash?.trim();
+    final realtimeDeviceId = _realtimeDeviceId?.trim();
+    if (deviceHash == null || deviceHash.isEmpty) return;
+    try {
+      await _channel.invokeMethod('setDeviceIdentifiers', {
+        'device_hash': deviceHash,
+        'device_id': (realtimeDeviceId?.isNotEmpty ?? false)
+            ? realtimeDeviceId
+            : deviceHash,
+      });
+      AppLogger.log(
+        'Native identifiers synced: '
+        'device_hash=$deviceHash device_id=${realtimeDeviceId ?? deviceHash}',
+      );
+    } catch (e) {
+      AppLogger.log('Native identifier sync skipped: $e');
+    }
   }
 
   Future<void> _reloadReminderSettings() async {
@@ -1817,6 +1838,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             serverDeviceId.isNotEmpty &&
             serverDeviceId != _realtimeDeviceId) {
           _realtimeDeviceId = serverDeviceId;
+          unawaited(_syncNativeDeviceIdentifiers());
           await RealtimeCommandService().dispose();
           await _startRealtimeListener();
         }
