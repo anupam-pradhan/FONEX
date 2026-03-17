@@ -45,7 +45,7 @@ class KeepAliveService : Service() {
         private const val KEY_REALTIME_DEVICE_ID = "realtime_device_id"
         private const val EXTRA_BACKGROUND_LOCK_ACTION = "fonex_background_lock_action"
         private const val EXTRA_BACKGROUND_UNLOCK_ACTION = "fonex_background_unlock_action"
-        private const val SERVER_BASE_URL = "https://v0-fonex-backend-system-k6.vercel.app/api/v1/devices"
+        private val SERVER_BASE_URL = BuildConfig.SERVER_BASE_URL
         private const val CHECKIN_PATH = "/checkin"
         private const val CHECKIN_INITIAL_DELAY_MS = 25_000L
         private const val CHECKIN_INTERVAL_MS = 2 * 60_000L

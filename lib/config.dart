@@ -11,8 +11,10 @@ class FonexConfig {
 
   /// Backend server base URL
   /// Update this to your actual server URL
-  static const String serverBaseUrl =
-      'https://v0-fonex-backend-system-k6.vercel.app/api/v1/devices';
+  static const String serverBaseUrl = String.fromEnvironment(
+    'SERVER_BASE_URL',
+    defaultValue: 'https://v0-fonex-backend-system-k6.vercel.app/api/v1/devices',
+  );
 
   /// API timeout in seconds
   static const int apiTimeoutSeconds = 10;
@@ -63,7 +65,7 @@ class FonexConfig {
   // ===========================================================================
 
   /// Number of days before device locks if EMI not paid
-  static const int lockAfterDays = 30;
+  static const int lockAfterDays = 7;
 
   /// SIM absent grace period (days before locking)
   static const int simAbsentLockDays = 7;

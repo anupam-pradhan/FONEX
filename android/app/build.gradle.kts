@@ -1,4 +1,5 @@
 import java.io.FileInputStream
+import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -19,6 +20,34 @@ val hasReleaseSigning =
     listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
         .all { key -> !keystoreProperties.getProperty(key).isNullOrBlank() }
 
+fun readDartDefine(name: String): String? {
+    val dartDefines = project.findProperty("dart-defines") as String? ?: return null
+    return dartDefines
+        .split(",")
+        .asSequence()
+        .mapNotNull { encoded ->
+            runCatching {
+                String(Base64.getDecoder().decode(encoded), Charsets.UTF_8)
+            }.getOrNull()
+        }
+        .mapNotNull { decoded ->
+            val separatorIndex = decoded.indexOf('=')
+            if (separatorIndex <= 0) {
+                null
+            } else {
+                decoded.substring(0, separatorIndex) to decoded.substring(separatorIndex + 1)
+            }
+        }
+        .firstOrNull { (key, _) -> key == name }
+        ?.second
+}
+
+val defaultServerBaseUrl = "https://v0-fonex-backend-system-k6.vercel.app/api/v1/devices"
+val serverBaseUrl = readDartDefine("SERVER_BASE_URL") ?: defaultServerBaseUrl
+val escapedServerBaseUrl = serverBaseUrl
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+
 android {
     namespace = "com.roycommunication.fonex"
     compileSdk = 36
@@ -38,6 +67,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
+        buildConfigField("String", "SERVER_BASE_URL", "\"$escapedServerBaseUrl\"")
     }
 
     signingConfigs {

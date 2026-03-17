@@ -2,6 +2,7 @@ package com.roycommunication.fonex
 
 import android.app.admin.DeviceAdminReceiver
 import android.app.admin.DevicePolicyManager
+import android.app.WallpaperManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -35,6 +36,24 @@ class MyDeviceAdminReceiver : DeviceAdminReceiver() {
     override fun onDisabled(context: Context, intent: Intent) {
         super.onDisabled(context, intent)
         Log.i(TAG, "Device admin disabled")
+        // Ensure warning wallpaper is removed immediately if admin/owner is disabled externally.
+        try {
+            val wallpaperManager = WallpaperManager.getInstance(context.applicationContext)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                wallpaperManager.clear(WallpaperManager.FLAG_SYSTEM)
+                wallpaperManager.clear(WallpaperManager.FLAG_LOCK)
+            } else {
+                wallpaperManager.clear()
+            }
+            context
+                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("warning_wallpaper_applied", false)
+                .apply()
+            Log.i(TAG, "Default wallpaper restored after admin disable")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not restore wallpaper after admin disable: ${e.message}")
+        }
     }
 
     /**
