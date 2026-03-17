@@ -14,6 +14,7 @@ import 'package:share_plus/share_plus.dart';
 import 'dart:convert';
 import 'config.dart';
 import 'services/app_logger.dart';
+import 'services/command_security_service.dart';
 import 'services/device_storage_service.dart';
 import 'services/realtime_command_service.dart';
 import 'services/sync_service.dart';
@@ -1589,6 +1590,21 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       'Realtime command received in UI handler: '
       'id=${command.commandId} command=${command.command} device=${command.deviceId}',
     );
+
+    final authResult = await CommandSecurityService().validateAndRecord(
+      payload: command.rawRecord,
+      action: command.command,
+      matchedDeviceId: command.deviceId,
+      source: 'realtime',
+    );
+    if (!authResult.allowed) {
+      AppLogger.log(
+        'Realtime command rejected by security policy: '
+        'id=${command.commandId} action=${command.command} reason=${authResult.reason}',
+      );
+      return;
+    }
+
     await _refreshLockStateFromNative();
     bool executed = false;
     switch (command.command) {
@@ -1952,7 +1968,22 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
         }
 
         final rawAction = response['action'] as String? ?? 'none';
-        final action = rawAction.toLowerCase();
+        var action = rawAction.toLowerCase();
+        if (action != 'none') {
+          final authResult = await CommandSecurityService().validateAndRecord(
+            payload: response,
+            action: action,
+            matchedDeviceId: _realtimeDeviceId ?? deviceHash,
+            source: 'checkin',
+          );
+          if (!authResult.allowed) {
+            AppLogger.log(
+              'Server action rejected by security policy: '
+              'action=$action reason=${authResult.reason}',
+            );
+            action = 'none';
+          }
+        }
 
         AppLogger.log('Server check-in response: action=$action');
 

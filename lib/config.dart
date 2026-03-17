@@ -13,7 +13,8 @@ class FonexConfig {
   /// Update this to your actual server URL
   static const String serverBaseUrl = String.fromEnvironment(
     'SERVER_BASE_URL',
-    defaultValue: 'https://v0-fonex-backend-system-k6.vercel.app/api/v1/devices',
+    defaultValue:
+        'https://v0-fonex-backend-system-k6.vercel.app/api/v1/devices',
   );
 
   /// API timeout in seconds
@@ -25,19 +26,35 @@ class FonexConfig {
   /// Supabase realtime configuration (set using --dart-define in production)
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: 'https://itwyfrwkhohdrgpboagf.supabase.co',
+    defaultValue: '',
   );
   static const String supabaseAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0d3lmcndraG9oZHJncGJvYWdmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1OTczODQsImV4cCI6MjA4NzE3MzM4NH0.sYiwReiVjaRtwVr2rMsppJHpGpA-dkQFjIByZ61HAU4',
+    defaultValue: '',
   );
 
   /// Device secret used for command ACK calls
   static const String deviceSecret = String.fromEnvironment(
     'DEVICE_SECRET',
-    defaultValue:
-        'bd2d3ee11180dc690715abf92a51308096625b0c16b48da07d651c8151d1e3c9',
+    defaultValue: '',
+  );
+
+  /// Secret used to verify signed lock/unlock commands (HMAC-SHA256)
+  static const String commandSigningSecret = String.fromEnvironment(
+    'COMMAND_SIGNING_SECRET',
+    defaultValue: '',
+  );
+
+  /// When true, unsigned/invalid commands are rejected.
+  static const bool enforceSignedCommands = bool.fromEnvironment(
+    'ENFORCE_SIGNED_COMMANDS',
+    defaultValue: false,
+  );
+
+  /// Maximum allowed age for signed commands (in seconds).
+  static const int commandSignatureMaxAgeSeconds = int.fromEnvironment(
+    'COMMAND_SIGNATURE_MAX_AGE_SECONDS',
+    defaultValue: 600,
   );
 
   /// Device command ACK endpoint path

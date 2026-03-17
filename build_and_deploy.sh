@@ -7,6 +7,17 @@ set -e  # Exit on error
 PROJECT_DIR="/Users/anupampradhan/Desktop/FONEX"
 cd "$PROJECT_DIR"
 
+ENV_FILE=".env"
+if [ -f "$ENV_FILE" ]; then
+    echo "🔐 Loading build environment from $ENV_FILE"
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+else
+    echo "⚠️  $ENV_FILE not found. Falling back to shell environment variables."
+fi
+
 echo "╔════════════════════════════════════════════════════════════╗"
 echo "║        FONEX - SUPABASE-ONLY DEPLOYMENT SCRIPT            ║"
 echo "╚════════════════════════════════════════════════════════════╝"
@@ -35,7 +46,43 @@ echo ""
 
 # Step 4: Build APK
 echo "🔨 Building release APK..."
-flutter build apk --release
+REQUIRED_ENV_KEYS=(
+    "SERVER_BASE_URL"
+    "SUPABASE_URL"
+    "SUPABASE_ANON_KEY"
+    "DEVICE_SECRET"
+    "COMMAND_SIGNING_SECRET"
+    "ENFORCE_SIGNED_COMMANDS"
+    "COMMAND_SIGNATURE_MAX_AGE_SECONDS"
+)
+
+MISSING_KEYS=()
+for key in "${REQUIRED_ENV_KEYS[@]}"; do
+    if [ -z "${!key}" ]; then
+        MISSING_KEYS+=("$key")
+    fi
+done
+
+if [ ${#MISSING_KEYS[@]} -gt 0 ]; then
+    echo "❌ Missing required environment values:"
+    for key in "${MISSING_KEYS[@]}"; do
+        echo "   - $key"
+    done
+    echo "Add them to .env (see .env.example) or export them in shell."
+    exit 1
+fi
+
+BUILD_CMD=(
+    flutter build apk --release
+    "--dart-define=SERVER_BASE_URL=$SERVER_BASE_URL"
+    "--dart-define=SUPABASE_URL=$SUPABASE_URL"
+    "--dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"
+    "--dart-define=DEVICE_SECRET=$DEVICE_SECRET"
+    "--dart-define=COMMAND_SIGNING_SECRET=$COMMAND_SIGNING_SECRET"
+    "--dart-define=ENFORCE_SIGNED_COMMANDS=$ENFORCE_SIGNED_COMMANDS"
+    "--dart-define=COMMAND_SIGNATURE_MAX_AGE_SECONDS=$COMMAND_SIGNATURE_MAX_AGE_SECONDS"
+)
+"${BUILD_CMD[@]}"
 
 if [ -f "build/app/outputs/flutter-apk/app-release.apk" ]; then
     echo "✅ APK built successfully"

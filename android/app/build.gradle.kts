@@ -47,6 +47,16 @@ val serverBaseUrl = readDartDefine("SERVER_BASE_URL") ?: defaultServerBaseUrl
 val escapedServerBaseUrl = serverBaseUrl
     .replace("\\", "\\\\")
     .replace("\"", "\\\"")
+val commandSigningSecret = readDartDefine("COMMAND_SIGNING_SECRET") ?: ""
+val escapedCommandSigningSecret = commandSigningSecret
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+val enforceSignedCommands = (readDartDefine("ENFORCE_SIGNED_COMMANDS") ?: "false")
+    .equals("true", ignoreCase = true)
+val commandSignatureMaxAgeSeconds = (readDartDefine("COMMAND_SIGNATURE_MAX_AGE_SECONDS")
+    ?.toIntOrNull()
+    ?: 600)
+    .coerceIn(30, 86_400)
 
 android {
     namespace = "com.roycommunication.fonex"
@@ -68,6 +78,9 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         buildConfigField("String", "SERVER_BASE_URL", "\"$escapedServerBaseUrl\"")
+        buildConfigField("String", "COMMAND_SIGNING_SECRET", "\"$escapedCommandSigningSecret\"")
+        buildConfigField("boolean", "ENFORCE_SIGNED_COMMANDS", enforceSignedCommands.toString())
+        buildConfigField("int", "COMMAND_SIGNATURE_MAX_AGE_SECONDS", commandSignatureMaxAgeSeconds.toString())
     }
 
     signingConfigs {

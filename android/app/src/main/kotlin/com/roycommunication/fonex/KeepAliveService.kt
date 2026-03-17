@@ -21,9 +21,13 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.time.Instant
+import java.util.Base64
 import java.util.Timer
 import java.util.TimerTask
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * Foreground keep-alive service to reduce OEM background process kills.
@@ -49,6 +53,9 @@ class KeepAliveService : Service() {
         private const val CHECKIN_PATH = "/checkin"
         private const val CHECKIN_INITIAL_DELAY_MS = 25_000L
         private const val CHECKIN_INTERVAL_MS = 2 * 60_000L
+        private const val KEY_SIGNED_COMMAND_SEEN = "signed_command_seen_ids"
+        private const val MAX_SEEN_COMMAND_IDS = 300
+        private const val FUTURE_SKEW_SECONDS = 60L
 
         fun start(context: Context) {
             val intent = Intent(context, KeepAliveService::class.java)
@@ -201,8 +208,20 @@ class KeepAliveService : Service() {
         applyPaidStateFromServer(response, manager)
         val action = response.optString("action", "none").trim().lowercase()
         when (action) {
-            "lock" -> handleLockActionFromFallback(manager)
-            "unlock" -> handleUnlockActionFromFallback(manager)
+            "lock" -> {
+                if (!isSignedActionAuthorized(response, "LOCK", identifiers)) {
+                    Log.w(TAG, "Rejected fallback LOCK action: failed command authorization")
+                    return
+                }
+                handleLockActionFromFallback(manager)
+            }
+            "unlock" -> {
+                if (!isSignedActionAuthorized(response, "UNLOCK", identifiers)) {
+                    Log.w(TAG, "Rejected fallback UNLOCK action: failed command authorization")
+                    return
+                }
+                handleUnlockActionFromFallback(manager)
+            }
             else -> Unit
         }
     }
@@ -259,6 +278,155 @@ class KeepAliveService : Service() {
         manager.enforceHomeLauncher(unpaidMode = false)
         launchAppForUnlockCleanup()
         Log.i(TAG, "Fallback unlock action applied in keep-alive service")
+    }
+
+    private fun isSignedActionAuthorized(
+        response: JSONObject,
+        action: String,
+        identifiers: DeviceIdentifiers,
+    ): Boolean {
+        val commandId = response.optString("command_id").trim().ifEmpty {
+            response.optString("id").trim()
+        }
+        if (commandId.isNotEmpty() && isReplayCommandId(commandId)) {
+            Log.w(TAG, "Rejected signed action replay: commandId=$commandId action=$action")
+            return false
+        }
+
+        val enforceSigned = BuildConfig.ENFORCE_SIGNED_COMMANDS
+        val signature = response.optString("command_signature").trim().ifEmpty {
+            response.optString("signature").trim()
+        }
+        if (!enforceSigned && signature.isEmpty()) {
+            if (commandId.isNotEmpty()) {
+                markCommandIdSeen(commandId)
+            }
+            return true
+        }
+
+        val secret = BuildConfig.COMMAND_SIGNING_SECRET.trim()
+        if (secret.isEmpty()) {
+            Log.w(TAG, "Signed command rejected: COMMAND_SIGNING_SECRET is empty")
+            return false
+        }
+        if (signature.isEmpty() || commandId.isEmpty()) {
+            Log.w(TAG, "Signed command rejected: missing signature or command_id")
+            return false
+        }
+
+        val issuedAtSeconds = parseEpochSeconds(
+            response.opt("command_ts")
+                ?: response.opt("issued_at")
+                ?: response.opt("timestamp")
+                ?: response.opt("created_at")
+        ) ?: run {
+            Log.w(TAG, "Signed command rejected: missing/invalid command timestamp")
+            return false
+        }
+
+        val targetDevice = response.optString("device_id").trim().ifEmpty {
+            response.optString("device_hash").trim()
+        }
+        if (targetDevice.isNotEmpty() && targetDevice != identifiers.deviceId) {
+            Log.w(
+                TAG,
+                "Signed command rejected: target mismatch target=$targetDevice local=${identifiers.deviceId}",
+            )
+            return false
+        }
+        val effectiveTarget = if (targetDevice.isNotEmpty()) targetDevice else identifiers.deviceId
+        val nowSeconds = System.currentTimeMillis() / 1000
+        val ageSeconds = nowSeconds - issuedAtSeconds
+        if (
+            ageSeconds < -FUTURE_SKEW_SECONDS ||
+            ageSeconds > BuildConfig.COMMAND_SIGNATURE_MAX_AGE_SECONDS.toLong()
+        ) {
+            Log.w(
+                TAG,
+                "Signed command rejected: timestamp out of range ageSeconds=$ageSeconds",
+            )
+            return false
+        }
+
+        val nonce = response.optString("command_nonce").trim().ifEmpty {
+            response.optString("nonce").trim()
+        }
+        val canonical = "$commandId|$action|$effectiveTarget|$issuedAtSeconds|$nonce"
+        if (!isSignatureMatch(secret = secret, canonical = canonical, received = signature)) {
+            Log.w(TAG, "Signed command rejected: signature mismatch")
+            return false
+        }
+
+        markCommandIdSeen(commandId)
+        return true
+    }
+
+    private fun parseEpochSeconds(value: Any?): Long? {
+        if (value == null) return null
+        return when (value) {
+            is Number -> {
+                val raw = value.toLong()
+                if (raw > 1_000_000_000_000L) raw / 1000L else raw
+            }
+            is String -> {
+                val trimmed = value.trim()
+                if (trimmed.isEmpty()) return null
+                val intValue = trimmed.toLongOrNull()
+                if (intValue != null) {
+                    if (intValue > 1_000_000_000_000L) intValue / 1000L else intValue
+                } else {
+                    try {
+                        Instant.parse(trimmed).epochSecond
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+            }
+            else -> null
+        }
+    }
+
+    private fun isSignatureMatch(secret: String, canonical: String, received: String): Boolean {
+        val mac = Mac.getInstance("HmacSHA256")
+        val keySpec = SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256")
+        mac.init(keySpec)
+        val digest = mac.doFinal(canonical.toByteArray(Charsets.UTF_8))
+
+        val expectedHex = digest.joinToString("") { "%02x".format(it) }
+        val expectedBase64 = Base64.getEncoder().encodeToString(digest)
+        val expectedBase64Url = Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
+
+        val normalizedReceived = received.trim()
+        return constantTimeEquals(normalizedReceived.lowercase(), expectedHex) ||
+            constantTimeEquals(normalizedReceived, expectedBase64) ||
+            constantTimeEquals(normalizedReceived.replace("=", ""), expectedBase64Url)
+    }
+
+    private fun constantTimeEquals(a: String, b: String): Boolean {
+        if (a.length != b.length) return false
+        var diff = 0
+        for (i in a.indices) {
+            diff = diff or (a[i].code xor b[i].code)
+        }
+        return diff == 0
+    }
+
+    private fun isReplayCommandId(commandId: String): Boolean {
+        val prefs = applicationContext.getSharedPreferences(PREFS_DEVICE, Context.MODE_PRIVATE)
+        val seen = prefs.getStringSet(KEY_SIGNED_COMMAND_SEEN, emptySet()) ?: emptySet()
+        return seen.contains(commandId)
+    }
+
+    private fun markCommandIdSeen(commandId: String) {
+        val prefs = applicationContext.getSharedPreferences(PREFS_DEVICE, Context.MODE_PRIVATE)
+        val current = (prefs.getStringSet(KEY_SIGNED_COMMAND_SEEN, emptySet()) ?: emptySet())
+            .toMutableList()
+        if (current.contains(commandId)) return
+        current.add(0, commandId)
+        while (current.size > MAX_SEEN_COMMAND_IDS) {
+            current.removeLast()
+        }
+        prefs.edit().putStringSet(KEY_SIGNED_COMMAND_SEEN, current.toSet()).apply()
     }
 
     private fun launchAppForImmediateLockUi() {

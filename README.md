@@ -200,32 +200,39 @@ Output path:
 
 ## Configuration
 
-Edit [`lib/config.dart`](lib/config.dart):
+Set runtime values in local `.env` (copy from `.env.example`).
 
-- `serverBaseUrl`
-- `storeName`
-- `supportPhone1`, `supportPhone2`
-- lock windows and app constants
+Required keys:
 
-Runtime defines can override built-in defaults:
-
+- `SERVER_BASE_URL`
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `DEVICE_SECRET`
+- `COMMAND_SIGNING_SECRET`
+- `ENFORCE_SIGNED_COMMANDS`
+- `COMMAND_SIGNATURE_MAX_AGE_SECONDS`
 
-Example:
+Example run/build with env:
 
 ```bash
-flutter run \
-  --dart-define=SUPABASE_URL=https://your-project.supabase.co \
-  --dart-define=SUPABASE_ANON_KEY=your_anon_key \
-  --dart-define=DEVICE_SECRET=your_device_secret
+set -a
+source .env
+set +a
+
+flutter run --debug \
+  --dart-define=SERVER_BASE_URL="$SERVER_BASE_URL" \
+  --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+  --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+  --dart-define=DEVICE_SECRET="$DEVICE_SECRET" \
+  --dart-define=COMMAND_SIGNING_SECRET="$COMMAND_SIGNING_SECRET" \
+  --dart-define=ENFORCE_SIGNED_COMMANDS="$ENFORCE_SIGNED_COMMANDS" \
+  --dart-define=COMMAND_SIGNATURE_MAX_AGE_SECONDS="$COMMAND_SIGNATURE_MAX_AGE_SECONDS"
 ```
 
 ## Important Production Notes
 
 1. Signed release requires `android/key.properties`; otherwise release may be unsigned.
-2. `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `DEVICE_SECRET` can be overridden via `--dart-define`.
+2. Use `.env` + `--dart-define` for secrets/config. Never commit `.env`.
 3. This app is Android-specific (native Device Owner APIs).
 4. Foreground keep-alive notification is expected behavior.
 

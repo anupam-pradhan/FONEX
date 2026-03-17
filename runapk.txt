@@ -1,10 +1,22 @@
+set -a
+source .env
+set +a
+
 flutter run --debug \
-  --dart-define=SUPABASE_URL=https://itwyfrwkhohdrgpboagf.supabase.co \
-  --dart-define=SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0d3lmcndraG9oZHJncGJvYWdmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1OTczODQsImV4cCI6MjA4NzE3MzM4NH0.sYiwReiVjaRtwVr2rMsppJHpGpA-dkQFjIByZ61HAU4 \
-  --dart-define=DEVICE_SECRET=bd2d3ee11180dc690715abf92a51308096625b0c16b48da07d651c8151d1e3c9
+  --dart-define=SERVER_BASE_URL="$SERVER_BASE_URL" \
+  --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+  --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+  --dart-define=DEVICE_SECRET="$DEVICE_SECRET" \
+  --dart-define=COMMAND_SIGNING_SECRET="$COMMAND_SIGNING_SECRET" \
+  --dart-define=ENFORCE_SIGNED_COMMANDS="$ENFORCE_SIGNED_COMMANDS" \
+  --dart-define=COMMAND_SIGNATURE_MAX_AGE_SECONDS="$COMMAND_SIGNATURE_MAX_AGE_SECONDS"
 
 
 flutter build apk --release \
-  --dart-define=SUPABASE_URL=https://itwyfrwkhohdrgpboagf.supabase.co \
-  --dart-define=SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0d3lmcndraG9oZHJncGJvYWdmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1OTczODQsImV4cCI6MjA4NzE3MzM4NH0.sYiwReiVjaRtwVr2rMsppJHpGpA-dkQFjIByZ61HAU4 \
-  --dart-define=DEVICE_SECRET=bd2d3ee11180dc690715abf92a51308096625b0c16b48da07d651c8151d1e3c9
+  --dart-define=SERVER_BASE_URL="$SERVER_BASE_URL" \
+  --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+  --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+  --dart-define=DEVICE_SECRET="$DEVICE_SECRET" \
+  --dart-define=COMMAND_SIGNING_SECRET="$COMMAND_SIGNING_SECRET" \
+  --dart-define=ENFORCE_SIGNED_COMMANDS="$ENFORCE_SIGNED_COMMANDS" \
+  --dart-define=COMMAND_SIGNATURE_MAX_AGE_SECONDS="$COMMAND_SIGNATURE_MAX_AGE_SECONDS"
