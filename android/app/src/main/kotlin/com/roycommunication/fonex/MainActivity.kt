@@ -43,6 +43,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.ceil
 import kotlin.math.max
 
 /**
@@ -62,7 +63,7 @@ class MainActivity : FlutterActivity() {
         private const val KEY_WARNING_WALLPAPER_APPLIED = "warning_wallpaper_applied"
         private const val KEY_WARNING_WALLPAPER_VERSION = "warning_wallpaper_version"
         private const val KEY_WARNING_WALLPAPER_LAST_APPLIED_AT = "warning_wallpaper_last_applied_at"
-        private const val WARNING_WALLPAPER_VERSION = 2
+        private const val WARNING_WALLPAPER_VERSION = 3
         private const val WARNING_WALLPAPER_REAPPLY_COOLDOWN_MS = 8_000L
         private const val REQUEST_CODE_POST_NOTIFICATIONS = 6013
         private const val EXTRA_BACKGROUND_LOCK_ACTION = "fonex_background_lock_action"
@@ -87,9 +88,10 @@ class MainActivity : FlutterActivity() {
         KeepAliveWatchdogWorker.schedule(applicationContext)
         requestNotificationPermissionIfNeeded()
         val paidInFull = isPaidInFull()
+        val isOwner = deviceLockManager.isDeviceOwner()
 
         // Ensure reset/uninstall protection persists across app restarts.
-        if (deviceLockManager.isDeviceOwner()) {
+        if (isOwner) {
             if (paidInFull) {
                 deviceLockManager.enforcePaidInFullState(this)
             } else {
@@ -112,14 +114,15 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        if (!paidInFull) {
+        if (!isOwner || paidInFull) {
+            // If Device Owner was removed (or full paid), always restore default wallpaper.
+            restoreOriginalSystemWallpaper()
+        } else {
             // Apply generated warning wallpaper in unpaid mode.
             applyWarningSystemWallpaper(refreshBackup = false)
-        } else {
-            restoreOriginalSystemWallpaper()
         }
         refreshHomeWarningWidget()
-        if (!paidInFull) {
+        if (isOwner && !paidInFull) {
             requestPinWarningWidgetIfSupported()
         }
         handleBackgroundServiceActions(intent)
@@ -133,7 +136,8 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (deviceLockManager.isDeviceOwner()) {
+        val isOwner = deviceLockManager.isDeviceOwner()
+        if (isOwner) {
             if (isPaidInFull()) {
                 deviceLockManager.enforcePaidInFullState(this)
             } else {
@@ -149,7 +153,7 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
-        if (isPaidInFull()) {
+        if (!isOwner || isPaidInFull()) {
             restoreOriginalSystemWallpaper()
         } else {
             // Keep generated warning wallpaper visible in unpaid mode.
@@ -406,6 +410,9 @@ class MainActivity : FlutterActivity() {
 
                 "clearDeviceOwner" -> {
                     val success = deviceLockManager.clearDeviceOwner()
+                    if (success) {
+                        restoreOriginalSystemWallpaper()
+                    }
                     result.success(success)
                 }
 
@@ -897,12 +904,27 @@ class MainActivity : FlutterActivity() {
             Log.w(TAG, "Failed to set desired wallpaper dimensions: ${e.message}")
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            wallpaperManager.setBitmap(
-                wallpaperBitmap,
-                Rect(0, 0, screenWidth, screenHeight),
-                true,
-                WallpaperManager.FLAG_SYSTEM
-            )
+            val cropHint = Rect(0, 0, screenWidth, screenHeight)
+            val allTargets = WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK
+            try {
+                wallpaperManager.setBitmap(
+                    wallpaperBitmap,
+                    cropHint,
+                    true,
+                    allTargets
+                )
+            } catch (e: Exception) {
+                Log.w(
+                    TAG,
+                    "Failed to set lock wallpaper together with home wallpaper, falling back to SYSTEM only: ${e.message}"
+                )
+                wallpaperManager.setBitmap(
+                    wallpaperBitmap,
+                    cropHint,
+                    true,
+                    WallpaperManager.FLAG_SYSTEM
+                )
+            }
         } else {
             wallpaperManager.setBitmap(wallpaperBitmap)
         }
@@ -925,23 +947,12 @@ class MainActivity : FlutterActivity() {
             targetWidth.toFloat() / source.width.toFloat(),
             targetHeight.toFloat() / source.height.toFloat()
         )
-        val scaledWidth = source.width * scale
-        val scaledHeight = source.height * scale
-        val left = (targetWidth - scaledWidth) / 2f
-        val top = (targetHeight - scaledHeight) / 2f
-
-        val output = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(output)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            isFilterBitmap = true
-        }
-        canvas.drawBitmap(
-            source,
-            null,
-            RectF(left, top, left + scaledWidth, top + scaledHeight),
-            paint
-        )
-        return output
+        val scaledWidth = ceil(source.width * scale.toDouble()).toInt()
+        val scaledHeight = ceil(source.height * scale.toDouble()).toInt()
+        val scaled = Bitmap.createScaledBitmap(source, scaledWidth, scaledHeight, true)
+        val left = ((scaledWidth - targetWidth) / 2).coerceAtLeast(0)
+        val top = ((scaledHeight - targetHeight) / 2).coerceAtLeast(0)
+        return Bitmap.createBitmap(scaled, left, top, targetWidth, targetHeight)
     }
 
     private fun isNetworkConnected(): Boolean {

@@ -40,6 +40,7 @@ const String _keyLastVerified = FonexConfig.keyLastVerified;
 const String _keyDeviceLocked = FonexConfig.keyDeviceLocked;
 const String _keySimAbsentSince = FonexConfig.keySimAbsentSince;
 const String _keyLockWindowDays = 'lock_window_days';
+const String _keyTimerAnchorMs = 'timer_anchor_ms';
 const String _keyBackgroundPromptShown = 'background_prompt_shown';
 const int _fallbackServerCheckSeconds = 60;
 const String _serverBaseUrl = FonexConfig.serverBaseUrl;
@@ -826,8 +827,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             ? requiredIntervalMinutes
             : DateTime.now().difference(lastSync).inMinutes;
         final shouldCheckNow =
-            !realtimeHealthy ||
-            minutesSinceLastSync >= requiredIntervalMinutes;
+            !realtimeHealthy || minutesSinceLastSync >= requiredIntervalMinutes;
         if (shouldCheckNow) {
           unawaited(_serverCheckIn());
         }
@@ -1161,11 +1161,30 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     return null;
   }
 
+  int _calendarDaysSince(DateTime anchor, {DateTime? now}) {
+    final effectiveNow = now ?? DateTime.now();
+    final anchorDate = DateTime(anchor.year, anchor.month, anchor.day);
+    final nowDate = DateTime(
+      effectiveNow.year,
+      effectiveNow.month,
+      effectiveNow.day,
+    );
+    return nowDate.difference(anchorDate).inDays.clamp(0, 36500);
+  }
+
+  DateTime _resolveCountdownAnchor(SharedPreferences prefs, {DateTime? now}) {
+    final effectiveNow = now ?? DateTime.now();
+    final anchorMs = prefs.getInt(_keyTimerAnchorMs);
+    final verifiedMs = prefs.getInt(_keyLastVerified);
+    final resolvedMs =
+        anchorMs ?? verifiedMs ?? effectiveNow.millisecondsSinceEpoch;
+    return DateTime.fromMillisecondsSinceEpoch(resolvedMs);
+  }
+
   int _calculateRemainingDays(SharedPreferences prefs, int lockWindowDays) {
-    final lastVerifiedMs = prefs.getInt(_keyLastVerified);
-    if (lastVerifiedMs == null) return lockWindowDays;
-    final lastVerified = DateTime.fromMillisecondsSinceEpoch(lastVerifiedMs);
-    final daysSince = DateTime.now().difference(lastVerified).inDays;
+    final now = DateTime.now();
+    final anchor = _resolveCountdownAnchor(prefs, now: now);
+    final daysSince = _calendarDaysSince(anchor, now: now);
     return (lockWindowDays - daysSince).clamp(0, lockWindowDays);
   }
 
@@ -1221,7 +1240,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
   }
 
-  Future<void> _syncServerRemainingDays(int remainingDays) async {
+  Future<void> _syncServerRemainingDays(
+    int remainingDays, {
+    bool allowIncrease = false,
+  }) async {
     if (_isPaidInFull || _isDeviceLocked) return;
     final normalizedRemaining = _normalizeLockWindowDays(remainingDays);
     final prefs = await SharedPreferences.getInstance();
@@ -1232,9 +1254,16 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     final currentRemaining = _calculateRemainingDays(prefs, windowDays);
     final previousUiRemaining = _daysRemaining;
 
-    // Avoid jitter: only skip if server says same or more days than local.
-    // Always trust server when it says fewer days (more urgent).
-    if (normalizedRemaining >= currentRemaining &&
+    // Heartbeat sync should never increase remaining days unless explicitly allowed
+    // by a backend "extend" action. This prevents stale server values from
+    // pinning the countdown (for example repeatedly returning 7).
+    if (!allowIncrease && normalizedRemaining >= currentRemaining) {
+      return;
+    }
+
+    // Avoid jitter when values are nearly identical during explicit updates.
+    if (allowIncrease &&
+        normalizedRemaining >= currentRemaining &&
         (normalizedRemaining - currentRemaining) <= 1) {
       return;
     }
@@ -1247,6 +1276,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       Duration(days: newWindowDays - normalizedRemaining),
     );
     await prefs.setInt(_keyLastVerified, anchor.millisecondsSinceEpoch);
+    await prefs.setInt(_keyTimerAnchorMs, anchor.millisecondsSinceEpoch);
 
     if (mounted) {
       setState(() {
@@ -1328,14 +1358,22 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       return;
     }
 
-    final lastVerifiedMs = prefs.getInt(_keyLastVerified);
+    var lastVerifiedMs = prefs.getInt(_keyLastVerified);
+    var timerAnchorMs = prefs.getInt(_keyTimerAnchorMs);
+    if (lastVerifiedMs == null && timerAnchorMs != null) {
+      lastVerifiedMs = timerAnchorMs;
+      await prefs.setInt(_keyLastVerified, timerAnchorMs);
+    }
+    if (lastVerifiedMs != null && timerAnchorMs == null) {
+      timerAnchorMs = lastVerifiedMs;
+      await prefs.setInt(_keyTimerAnchorMs, lastVerifiedMs);
+    }
 
-    if (lastVerifiedMs == null) {
+    if (lastVerifiedMs == null && timerAnchorMs == null) {
       // First run — set initial verification timestamp
-      await prefs.setInt(
-        _keyLastVerified,
-        DateTime.now().millisecondsSinceEpoch,
-      );
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      await prefs.setInt(_keyLastVerified, nowMs);
+      await prefs.setInt(_keyTimerAnchorMs, nowMs);
       await prefs.setBool(_keyDeviceLocked, false);
       if (mounted) {
         setState(() {
@@ -1365,8 +1403,12 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
     }
 
     // Not locked — check timer expiry
-    final lastVerified = DateTime.fromMillisecondsSinceEpoch(lastVerifiedMs);
-    final daysSince = DateTime.now().difference(lastVerified).inDays;
+    final effectiveAnchorMs = timerAnchorMs ?? lastVerifiedMs;
+    if (effectiveAnchorMs == null) {
+      return;
+    }
+    final anchor = DateTime.fromMillisecondsSinceEpoch(effectiveAnchorMs);
+    final daysSince = _calendarDaysSince(anchor);
     final remaining = lockWindowDays - daysSince;
 
     if (daysSince >= lockWindowDays) {
@@ -1678,9 +1720,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
       final lastMs = prefs.getInt(_keyLastNotifMs) ?? 0;
       if (lastSignature == normalizedSignature &&
           (nowMs - lastMs) < dedupeWindow.inMilliseconds) {
-        AppLogger.log(
-          'Notification deduped: title="$title" body="$body"',
-        );
+        AppLogger.log('Notification deduped: title="$title" body="$body"');
         return;
       }
 
@@ -1884,8 +1924,7 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
           // - paid -> unpaid transition
           // - explicit tenure window from server
           // Never reuse days_remaining as tenure window.
-          if (!_isDeviceLocked &&
-              (wasPaidInFull || serverTenureDays != null)) {
+          if (!_isDeviceLocked && (wasPaidInFull || serverTenureDays != null)) {
             await _activateDueAmountMode(
               days: serverTenureDays,
               forceResetAnchor: wasPaidInFull,
@@ -1964,7 +2003,9 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             break;
           case 'extend':
           case 'extend_days':
-            final serverRemaining = _parseServerDays(response['days_remaining']);
+            final serverRemaining = _parseServerDays(
+              response['days_remaining'],
+            );
             final serverWindow =
                 _parseServerDays(response['days']) ??
                 _parseServerDays(response['tenure']);
@@ -1972,7 +2013,10 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
             // Source of truth: days_remaining from server.
             // Never treat remaining days as "extend by N days" locally.
             if (serverRemaining != null) {
-              await _syncServerRemainingDays(serverRemaining);
+              await _syncServerRemainingDays(
+                serverRemaining,
+                allowIncrease: true,
+              );
               _showCommandNotification(
                 'Remaining Days Updated',
                 'Your remaining days are now set to $serverRemaining.',
@@ -2069,12 +2113,11 @@ class _DeviceControlHomeState extends State<DeviceControlHome>
   // DEV: simulate expiry for the currently configured lock window.
   Future<void> _devSimulateExpiry() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(
-      _keyLastVerified,
-      DateTime.now()
-          .subtract(Duration(days: _lockWindowDays + 1))
-          .millisecondsSinceEpoch,
-    );
+    final expiredAnchorMs = DateTime.now()
+        .subtract(Duration(days: _lockWindowDays + 1))
+        .millisecondsSinceEpoch;
+    await prefs.setInt(_keyLastVerified, expiredAnchorMs);
+    await prefs.setInt(_keyTimerAnchorMs, expiredAnchorMs);
     await _checkTimerAndLock();
   }
 
@@ -3334,54 +3377,63 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                               const SizedBox(height: 20),
 
                               // Contact card
-                              GlassCard(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 16,
-                                ),
-                                borderRadius: 14,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Container(
-                                      width: 40,
-                                      height: 40,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: FonexColors.cyan.withValues(
-                                          alpha: 0.12,
-                                        ),
-                                      ),
-                                      child: const Icon(
-                                        Icons.store_rounded,
-                                        color: FonexColors.cyan,
-                                        size: 20,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 14),
-                                    Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          widget.storeName,
-                                          style: GoogleFonts.inter(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w700,
-                                            color: FonexColors.textPrimary,
+                              SizedBox(
+                                width: double.infinity,
+                                child: GlassCard(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                    vertical: 16,
+                                  ),
+                                  borderRadius: 14,
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 40,
+                                        height: 40,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: FonexColors.cyan.withValues(
+                                            alpha: 0.12,
                                           ),
                                         ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          'Visit store to unlock',
-                                          style: GoogleFonts.inter(
-                                            fontSize: 12,
-                                            color: FonexColors.textSecondary,
-                                          ),
+                                        child: const Icon(
+                                          Icons.store_rounded,
+                                          color: FonexColors.cyan,
+                                          size: 20,
                                         ),
-                                      ],
-                                    ),
-                                  ],
+                                      ),
+                                      const SizedBox(width: 14),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              widget.storeName,
+                                              style: GoogleFonts.inter(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w700,
+                                                color: FonexColors.textPrimary,
+                                              ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              'Visit store to unlock',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 12,
+                                                color:
+                                                    FonexColors.textSecondary,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
 
@@ -3444,12 +3496,17 @@ class _LockScreenState extends State<LockScreen> with TickerProviderStateMixin {
                                           size: 16,
                                         ),
                                         const SizedBox(width: 8),
-                                        Text(
-                                          'Need Help? Call ${widget.storeName}',
-                                          style: GoogleFonts.inter(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                            color: FonexColors.textSecondary,
+                                        Flexible(
+                                          child: Text(
+                                            'Need Help? Call ${widget.storeName}',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: FonexColors.textSecondary,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
                                       ],
@@ -4714,7 +4771,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ..writeln('  reconnecting=${diagnostics.reconnecting}')
         ..writeln('  reconnect_attempt=${diagnostics.reconnectAttempt}')
         ..writeln('  last_status=${diagnostics.lastStatus}')
-        ..writeln('  last_disconnect_reason=${diagnostics.lastDisconnectReason}')
+        ..writeln(
+          '  last_disconnect_reason=${diagnostics.lastDisconnectReason}',
+        )
         ..writeln('  last_subscribed_at=${diagnostics.lastSubscribedAt}')
         ..writeln('  last_command_id=${diagnostics.lastCommandId}')
         ..writeln('  last_command=${diagnostics.lastCommand}')
@@ -4758,9 +4817,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       AppLogger.log('Audit log exported: ${file.path}');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Audit export failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Audit export failed: $e')));
       AppLogger.log('Audit export failed: $e');
     } finally {
       if (mounted) setState(() => _isExporting = false);
@@ -5341,10 +5400,11 @@ class BackgroundHealthDetailsScreen extends StatelessWidget {
                   builder: (context, crashCount, _) {
                     return GlassCard(
                       padding: const EdgeInsets.all(16),
-                      borderColor: (crashCount > 0
-                              ? FonexColors.orange
-                              : FonexColors.cardBorder)
-                          .withValues(alpha: 0.35),
+                      borderColor:
+                          (crashCount > 0
+                                  ? FonexColors.orange
+                                  : FonexColors.cardBorder)
+                              .withValues(alpha: 0.35),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -5373,23 +5433,28 @@ class BackgroundHealthDetailsScreen extends StatelessWidget {
                               }
                               return Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
-                                children: events.map((event) {
-                                  final source =
-                                      event['source']?.toString() ?? 'unknown';
-                                  final message =
-                                      event['message']?.toString() ?? '-';
-                                  final ts = event['ts']?.toString() ?? '-';
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: Text(
-                                      '$ts • $source • ${message.length > 90 ? '${message.substring(0, 90)}...' : message}',
-                                      style: GoogleFonts.inter(
-                                        color: FonexColors.textSecondary,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  );
-                                }).toList(growable: false),
+                                children: events
+                                    .map((event) {
+                                      final source =
+                                          event['source']?.toString() ??
+                                          'unknown';
+                                      final message =
+                                          event['message']?.toString() ?? '-';
+                                      final ts = event['ts']?.toString() ?? '-';
+                                      return Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 8,
+                                        ),
+                                        child: Text(
+                                          '$ts • $source • ${message.length > 90 ? '${message.substring(0, 90)}...' : message}',
+                                          style: GoogleFonts.inter(
+                                            color: FonexColors.textSecondary,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      );
+                                    })
+                                    .toList(growable: false),
                               );
                             },
                           ),
@@ -5491,7 +5556,8 @@ class _AntiKillSetupAssistantScreenState
 
   @override
   Widget build(BuildContext context) {
-    final allDone = _autoStartDone && (_batteryDone || _isIgnoringBatteryOptimizations);
+    final allDone =
+        _autoStartDone && (_batteryDone || _isIgnoringBatteryOptimizations);
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -5570,10 +5636,8 @@ class _AntiKillSetupAssistantScreenState
                       'Mark auto-start step complete',
                       style: GoogleFonts.inter(color: FonexColors.textPrimary),
                     ),
-                    onChanged: (value) => _setDone(
-                      _keyAntiKillAutoStartDone,
-                      value,
-                    ),
+                    onChanged: (value) =>
+                        _setDone(_keyAntiKillAutoStartDone, value),
                   ),
                   ListTile(
                     leading: const Icon(Icons.battery_saver_rounded),
@@ -5582,8 +5646,9 @@ class _AntiKillSetupAssistantScreenState
                       style: GoogleFonts.inter(color: FonexColors.textPrimary),
                     ),
                     trailing: const Icon(Icons.open_in_new_rounded),
-                    onTap: () =>
-                        _channel.invokeMethod('requestIgnoreBatteryOptimizations'),
+                    onTap: () => _channel.invokeMethod(
+                      'requestIgnoreBatteryOptimizations',
+                    ),
                   ),
                   SwitchListTile(
                     value: _batteryDone || _isIgnoringBatteryOptimizations,
@@ -5639,15 +5704,15 @@ class _RecoveryActionsScreenState extends State<RecoveryActionsScreen> {
     try {
       await action();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$label completed')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$label completed')));
       AppLogger.log('Recovery action completed: $label');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$label failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$label failed: $e')));
       AppLogger.log('Recovery action failed: $label error=$e');
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -5704,10 +5769,8 @@ class _RecoveryActionsScreenState extends State<RecoveryActionsScreen> {
     if (confirmed != true) return;
 
     final pin = pinController.text.trim();
-    final valid = await _channel.invokeMethod<bool>('validatePin', {
-          'pin': pin,
-        }) ??
-        false;
+    final valid =
+        await _channel.invokeMethod<bool>('validatePin', {'pin': pin}) ?? false;
     if (!valid) {
       throw Exception('Invalid PIN');
     }
@@ -5773,9 +5836,9 @@ class _RecoveryActionsScreenState extends State<RecoveryActionsScreen> {
                         onPressed: _busy
                             ? null
                             : () => _runAction(
-                                  'Reconnect realtime',
-                                  _reconnectRealtime,
-                                ),
+                                'Reconnect realtime',
+                                _reconnectRealtime,
+                              ),
                         child: const Text('Reconnect Realtime Now'),
                       ),
                       FilledButton.tonal(
@@ -5788,9 +5851,9 @@ class _RecoveryActionsScreenState extends State<RecoveryActionsScreen> {
                         onPressed: _busy
                             ? null
                             : () => _runAction(
-                                  'Clear stale lock flag',
-                                  _clearStaleLockFlag,
-                                ),
+                                'Clear stale lock flag',
+                                _clearStaleLockFlag,
+                              ),
                         child: const Text('Clear Stale Lock Flag'),
                       ),
                     ],
@@ -5801,8 +5864,9 @@ class _RecoveryActionsScreenState extends State<RecoveryActionsScreen> {
             const SizedBox(height: 14),
             GlassCard(
               padding: const EdgeInsets.all(16),
-              borderColor: (active ? FonexColors.orange : FonexColors.cardBorder)
-                  .withValues(alpha: 0.4),
+              borderColor:
+                  (active ? FonexColors.orange : FonexColors.cardBorder)
+                      .withValues(alpha: 0.4),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -5832,18 +5896,18 @@ class _RecoveryActionsScreenState extends State<RecoveryActionsScreen> {
                         onPressed: _busy
                             ? null
                             : () => _runAction(
-                                  'Enable support unlock window',
-                                  _activateSupportWindow,
-                                ),
+                                'Enable support unlock window',
+                                _activateSupportWindow,
+                              ),
                         child: const Text('Activate 30 min Window'),
                       ),
                       OutlinedButton(
                         onPressed: _busy || !active
                             ? null
                             : () => _runAction(
-                                  'Disable support window',
-                                  _endSupportWindowNow,
-                                ),
+                                'Disable support window',
+                                _endSupportWindowNow,
+                              ),
                         child: const Text('End Support Window'),
                       ),
                     ],

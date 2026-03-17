@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.os.UserManager
@@ -29,6 +30,7 @@ class DeviceLockManager(private val context: Context) {
         private const val TAG = "DeviceLockManager"
         private const val PREFS_NAME = "fonex_device_prefs"
         private const val KEY_DEVICE_LOCKED = "device_locked"
+        private const val HOME_ALIAS_CLASS = "LockHomeActivity"
         private const val RESTRICTION_NO_SET_WALLPAPER = "no_set_wallpaper"
         private const val GOOGLE_ACCOUNT_TYPE = "com.google"
         private val WALLPAPER_PICKER_PACKAGES = listOf(
@@ -435,7 +437,10 @@ class DeviceLockManager(private val context: Context) {
      */
     fun enforceHomeLauncher(unpaidMode: Boolean): Boolean {
         return try {
-            if (!isDeviceOwner()) return false
+            if (!isDeviceOwner()) {
+                setHomeAliasEnabled(false)
+                return false
+            }
 
             // Always clear previous mapping first to avoid stale state.
             devicePolicyManager.clearPackagePersistentPreferredActivities(
@@ -446,6 +451,7 @@ class DeviceLockManager(private val context: Context) {
             // During debug/testing, do not force FONEX as HOME launcher.
             // This avoids trapping navigation while validating command flows.
             if (isDebuggableBuild()) {
+                setHomeAliasEnabled(false)
                 // Also clear user-level preferred HOME selection for this package.
                 // Without this, pressing Home can continue reopening FONEX in debug.
                 try {
@@ -457,12 +463,17 @@ class DeviceLockManager(private val context: Context) {
                 return true
             }
 
+            setHomeAliasEnabled(unpaidMode)
+
             if (unpaidMode) {
                 val filter = IntentFilter(Intent.ACTION_MAIN).apply {
                     addCategory(Intent.CATEGORY_HOME)
                     addCategory(Intent.CATEGORY_DEFAULT)
                 }
-                val homeActivity = ComponentName(context, MainActivity::class.java)
+                val homeActivity = ComponentName(
+                    context.packageName,
+                    "${context.packageName}.$HOME_ALIAS_CLASS"
+                )
                 devicePolicyManager.addPersistentPreferredActivity(
                     adminComponent,
                     filter,
@@ -766,6 +777,30 @@ class DeviceLockManager(private val context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "Could not update backup service state: ${e.message}")
             false
+        }
+    }
+
+    private fun setHomeAliasEnabled(enabled: Boolean) {
+        try {
+            val alias = ComponentName(
+                context.packageName,
+                "${context.packageName}.$HOME_ALIAS_CLASS"
+            )
+            val packageManager = context.packageManager
+            val desiredState = if (enabled) {
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            } else {
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+            }
+            if (packageManager.getComponentEnabledSetting(alias) != desiredState) {
+                packageManager.setComponentEnabledSetting(
+                    alias,
+                    desiredState,
+                    PackageManager.DONT_KILL_APP
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not toggle HOME alias state: ${e.message}")
         }
     }
 
