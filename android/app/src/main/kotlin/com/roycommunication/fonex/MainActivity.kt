@@ -618,7 +618,8 @@ class MainActivity : FlutterActivity() {
     private fun restoreOriginalSystemWallpaper() {
         try {
             val original = loadOriginalWallpaperBitmap() ?: run {
-                Log.i(TAG, "No original wallpaper backup found; skipping restore")
+                Log.i(TAG, "No original wallpaper backup found; clearing to system default")
+                clearToSystemDefaultWallpaper()
                 setWarningWallpaperMarkedApplied(false)
                 return
             }
@@ -627,6 +628,21 @@ class MainActivity : FlutterActivity() {
             Log.i(TAG, "Original system wallpaper restored")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to restore original wallpaper: ${e.message}", e)
+        }
+    }
+
+    private fun clearToSystemDefaultWallpaper() {
+        try {
+            val wallpaperManager = WallpaperManager.getInstance(applicationContext)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                wallpaperManager.clear(WallpaperManager.FLAG_SYSTEM)
+                wallpaperManager.clear(WallpaperManager.FLAG_LOCK)
+            } else {
+                wallpaperManager.clear()
+            }
+            Log.i(TAG, "System default wallpaper restored")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to clear to system default wallpaper: ${e.message}")
         }
     }
 

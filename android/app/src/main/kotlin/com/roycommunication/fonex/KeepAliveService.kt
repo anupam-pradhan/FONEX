@@ -6,8 +6,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.WallpaperManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.IBinder
 import android.telephony.TelephonyManager
@@ -17,6 +20,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
@@ -45,8 +49,10 @@ class KeepAliveService : Service() {
         private const val PREFS_FLUTTER = "FlutterSharedPreferences"
         private const val KEY_PAID_IN_FULL = "is_paid_in_full"
         private const val KEY_LAST_UNLOCK_MS = "last_unlock_ms"
+        private const val KEY_WARNING_WALLPAPER_APPLIED = "warning_wallpaper_applied"
         private const val KEY_DEVICE_HASH_STORED = "device_hash_stored"
         private const val KEY_REALTIME_DEVICE_ID = "realtime_device_id"
+        private const val ORIGINAL_WALLPAPER_FILE = "original_system_wallpaper.png"
         private const val EXTRA_BACKGROUND_LOCK_ACTION = "fonex_background_lock_action"
         private const val EXTRA_BACKGROUND_UNLOCK_ACTION = "fonex_background_unlock_action"
         private val SERVER_BASE_URL = BuildConfig.SERVER_BASE_URL
@@ -245,10 +251,64 @@ class KeepAliveService : Service() {
             prefs.edit().putBoolean(KEY_PAID_IN_FULL, paid).apply()
             if (paid) {
                 manager.enforcePaidInFullState(activity = null)
+                restorePaidModeWallpaper(force = true)
             } else {
                 manager.enforceFactoryResetBlock()
             }
             Log.i(TAG, "Legacy check-in paid state synced: paidInFull=$paid")
+        } else if (paid) {
+            // Keep background flow self-healing in case UI path never resumed after payment.
+            restorePaidModeWallpaper(force = false)
+        }
+    }
+
+    private fun restorePaidModeWallpaper(force: Boolean) {
+        val prefs = applicationContext.getSharedPreferences(PREFS_DEVICE, Context.MODE_PRIVATE)
+        val wasWarningApplied = prefs.getBoolean(KEY_WARNING_WALLPAPER_APPLIED, false)
+        if (!force && !wasWarningApplied) return
+
+        try {
+            val wallpaperManager = WallpaperManager.getInstance(applicationContext)
+            val backupFile = File(filesDir, ORIGINAL_WALLPAPER_FILE)
+            val restored = if (backupFile.exists()) {
+                val bitmap = BitmapFactory.decodeFile(backupFile.absolutePath)
+                if (bitmap != null) {
+                    setSystemAndLockWallpaper(wallpaperManager, bitmap)
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+
+            if (!restored) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    wallpaperManager.clear(WallpaperManager.FLAG_SYSTEM)
+                    wallpaperManager.clear(WallpaperManager.FLAG_LOCK)
+                } else {
+                    wallpaperManager.clear()
+                }
+            }
+
+            prefs.edit().putBoolean(KEY_WARNING_WALLPAPER_APPLIED, false).apply()
+            Log.i(TAG, "Paid mode wallpaper restore applied. restoredFromBackup=$restored")
+        } catch (e: Exception) {
+            Log.w(TAG, "Paid mode wallpaper restore failed: ${e.message}")
+        }
+    }
+
+    private fun setSystemAndLockWallpaper(wallpaperManager: WallpaperManager, bitmap: Bitmap) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val allTargets = WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK
+            try {
+                wallpaperManager.setBitmap(bitmap, null, true, allTargets)
+            } catch (e: Exception) {
+                Log.w(TAG, "Setting lock wallpaper failed; using system wallpaper only: ${e.message}")
+                wallpaperManager.setBitmap(bitmap, null, true, WallpaperManager.FLAG_SYSTEM)
+            }
+        } else {
+            wallpaperManager.setBitmap(bitmap)
         }
     }
 
